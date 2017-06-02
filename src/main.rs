@@ -1,3 +1,6 @@
+mod nes;
+use nes::NES;
+
 fn main() {
-    println!("Hello, world!");
+    let mut nes = NES::new();
 }

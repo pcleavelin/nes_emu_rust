@@ -1,6 +1,6 @@
 [package]
 name = "nes_emu_rust"
 version = "0.1.0"
-authors = ["patri"]
+authors = ["Patrick Cleavelin"]
 
 [dependencies]
