@@ -1,5 +1,5 @@
 pub struct NESCart {
-
+    
 }
 
 impl NESCart {
