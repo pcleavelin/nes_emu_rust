@@ -20,4 +20,8 @@ impl NES {
             interconnect: Interconnect::new(),
         }
     }
+
+    pub fn insert_cart(&mut self, rom: &str) {
+        self.interconnect.insert_cart(rom);
+    }
 }
