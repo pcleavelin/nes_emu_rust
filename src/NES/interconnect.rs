@@ -42,7 +42,7 @@ impl Interconnect {
     //BIG TODO: This will probably need to be /totally/ overhauled
     //in order for ROMS with different mappers to work; so for now
     //we are just going to hardcode mapper 000
-    fn read_mem(&self, addr: usize) -> u8 {
+    pub fn read_mem(&self, addr: usize) -> u8 {
         match addr {
             0x0000...0x1FFF => {
                 self.internal_ram[addr % 0x0800]
@@ -110,7 +110,7 @@ impl Interconnect {
     //BIG TODO: This will probably need to be /totally/ overhauled
     //in order for ROMS with different mappers to work; so for now
     //we are just going to hardcode mapper 000
-    fn write_mem(&mut self, addr: usize, val: u8) {
+    pub fn write_mem(&mut self, addr: usize, val: u8) {
         match addr {
             0x0000...0x1FFF => {
                 self.internal_ram[addr % 0x0800] = val;

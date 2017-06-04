@@ -39,6 +39,8 @@ impl NESCart {
         self.data[addr]
     }
 
+    //Header info obtained from NESDev wiki
+    //https://wiki.nesdev.com/w/index.php/INES 
     pub fn print_header(&self) {
         println!("ROM Size:");
         println!("Size of PRG ROM * 16KB: 0x{:0X}", self.data[4] as u16 * 16000);
