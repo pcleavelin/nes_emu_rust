@@ -42,6 +42,7 @@ impl Interconnect {
     //BIG TODO: This will probably need to be /totally/ overhauled
     //in order for ROMS with different mappers to work; so for now
     //we are just going to hardcode mapper 000
+    //https://wiki.nesdev.com/w/index.php/CPU_memory_map
     pub fn read_mem(&self, addr: usize) -> u8 {
         match addr {
             0x0000...0x1FFF => {
@@ -61,7 +62,7 @@ impl Interconnect {
             }
 
             0x4020...0xFFFF => {
-                self.cart.read(addr - 0x20)
+                self.cart.read(addr - 0x4010)
             }
 
             _ => {

@@ -4,6 +4,8 @@ mod apu;
 mod io;
 mod cart;
 mod interconnect;
+mod opcode;
+mod integer_casting;
 
 use self::cpu::*;
 use self::interconnect::*;
@@ -50,5 +52,13 @@ impl NES {
 
     pub fn insert_cart(&mut self, rom: &str) {
         self.interconnect.insert_cart(rom);
+    }
+
+    pub fn run(&mut self) {
+        for _ in 0..10 {
+            if self.cpu.do_instruction(&mut self.interconnect) == false {
+                break;
+            }
+        }
     }
 }

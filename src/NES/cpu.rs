@@ -1,6 +1,10 @@
 use std::ops::{BitOr, BitAnd};
 
+use super::integer_casting::CastWithNegation;
 use super::interconnect::Interconnect;
+use super::opcode::*;
+use super::opcode::Op::*;
+use enum_primitive::FromPrimitive;
 
 #[derive(Copy, Clone)]
 pub struct CPUStatus {
@@ -53,6 +57,25 @@ impl CPUStatus {
         }
     }
 
+    pub fn set_carry(&mut self, val: bool) {
+        self.carry = val;
+    }
+    pub fn set_zero(&mut self, val: bool) {
+        self.zero = val;
+    }
+    pub fn set_irq_disable(&mut self, val: bool) {
+        self.irq_disable = val;
+    }
+    pub fn set_decimal(&mut self, val: bool) {
+        self.decimal = val;
+    }
+    pub fn set_overflow(&mut self, val: bool) {
+        self.overflow = val;
+    }
+    pub fn set_negative(&mut self, val: bool) {
+        self.negative = val;
+    }
+
     pub fn to_u8(&self) -> u8 {
         let mut val = self.carry as u8;
         val += (self.zero as u8) << 1;
@@ -69,8 +92,10 @@ pub struct NESCpu {
     a: u8, //accumulator
     x: u8, //x-index
     y: u8, //y-index
-
     s: u8, //stack-pointer
+
+    pc: u16, //program counter
+
     p: CPUStatus, //cpu status
 }
 
@@ -80,8 +105,10 @@ impl NESCpu {
             a: 0,
             x: 0,
             y: 0,
-            
             s: 0,
+
+            pc: 0x4020, //for now just make this the start of PRG ROM in the cart
+
             p: CPUStatus::new(),
         }
     }
@@ -104,12 +131,48 @@ impl NESCpu {
 
     pub fn set_a(&mut self, val: u8) {
         self.a = val;
+
+        if self.a == 0 {
+            self.p.set_zero(true);
+        } else {
+            self.p.set_zero(false);
+        }
+
+        if (self.a & 0x80) > 1 {
+            self.p.set_negative(true);
+        } else {
+            self.p.set_negative(false);
+        }
     }
     pub fn set_x(&mut self, val: u8) {
         self.x = val;
+
+        if self.x == 0 {
+            self.p.set_zero(true);
+        } else {
+            self.p.set_zero(false);
+        }
+
+        if (self.x & 0x80) > 1 {
+            self.p.set_negative(true);
+        } else {
+            self.p.set_negative(false);
+        }
     }
     pub fn set_y(&mut self, val: u8) {
         self.y = val;
+
+        if self.y == 0 {
+            self.p.set_zero(true);
+        } else {
+            self.p.set_zero(false);
+        }
+
+        if (self.y & 0x80) > 1 {
+            self.p.set_negative(true);
+        } else {
+            self.p.set_negative(false);
+        }
     }
     pub fn set_s(&mut self, val: u8) {
         self.s = val;
@@ -134,8 +197,103 @@ impl NESCpu {
     pub fn offset_s(&mut self, val: u8) {
         self.s += val;
     }
+    pub fn offset_pc(&mut self, val: u16) {
+        self.pc = self.pc.wrapping_add(val);
+    }
 
-    pub fn do_instruction(&mut self, interconnect: &mut Interconnect) {
-        //insert funness here
+    pub fn do_instruction(&mut self, interconnect: &mut Interconnect) -> bool{
+
+        //Read 3 bytes (1st is opcode, 2nd is first operand (if any), 3rd is second operand (if any))
+        let op = interconnect.read_mem(self.pc as usize) as u32;
+        let imm1 = (interconnect.read_mem((self.pc + 1) as usize) as u32) << 8;
+        let imm2 = (interconnect.read_mem((self.pc + 2) as usize) as u32) << 16;
+
+        let opcode = Opcode::new(op | imm1 | imm2);
+
+        match Op::from_i32(opcode.op() as i32) {
+            Some(op) => {
+                print!("{:?} ", op);
+                
+                match op {
+
+                    //Branch if Plus (adds to the program counter if negative flag is clear)
+                    BPLRelative => {
+                        if self.p.negative == false {
+                            println!("0x{:04X}", opcode.imm1().cast_with_neg());
+                            self.offset_pc(opcode.imm1().cast_with_neg());
+                            self.offset_pc(1);
+                        } else {
+                            self.offset_pc(2);
+                        }
+                    }
+
+                    //Set Interrupt Disable (Sets the I flag to true)
+                    SEIImplied => {
+                        self.p.set_irq_disable(true);
+
+                        self.offset_pc(1);
+                    }
+
+                    //Store Accumulator (Stores a into memory with absolute addressing)
+                    STAAbsolute => {
+                        interconnect.write_absolute(opcode.abs_addr(), self.a);
+
+                        self.offset_pc(3);
+                    }
+
+                    //Transfers x-index into stack pointer
+                    TXSImplied => {
+                        self.s = self.x;
+
+                        self.offset_pc(1);
+                    }
+
+                    //Loads operand into x-index (modifies zero and negatives flags)
+                    LDXImmediate => {
+                        self.set_x(opcode.imm1());
+
+                        self.offset_pc(2);
+                    }
+
+                    //Loads operand into accumulator (modifies zero and negatives flags)
+                    LDAImmediate => {
+                        self.set_a(opcode.imm1());
+
+                        self.offset_pc(2);
+                    }
+
+                    //Loads operand into accumulator using absolute addressing
+                    //(modifies zero and negatives flags)
+                    LDAAbsolute => {
+                        let val = interconnect.read_absolute(opcode.abs_addr());
+
+                        self.set_a(val);
+
+                        self.offset_pc(3);
+                    }
+
+                    //Clear Decimal Mode (Sets the D flag to false)
+                    CLDImplied => {
+                        self.p.set_decimal(false);
+
+                        self.offset_pc(1);
+                    }
+
+                    _ => {
+                        println!("encountered unimplemented opcode: {:?}", op);
+                        return false
+                    }
+                }
+            }
+            
+            None => {
+                println!("unknown {:?}, pc: 0x{:04X}", opcode, self.pc);
+                return false
+            }
+        }
+        
+        println!("{:?}, pc: 0x{:04X}", opcode, self.pc);
+
+        true
     }
 }

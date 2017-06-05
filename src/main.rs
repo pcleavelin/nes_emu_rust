@@ -1,3 +1,5 @@
+#[macro_use] extern crate enum_primitive;
+
 use std::env;
 
 mod nes;
@@ -13,4 +15,7 @@ fn main() {
 
         nes.insert_cart(rom_name);
     }
+
+    nes.hard_restart();
+    nes.run();
 }
