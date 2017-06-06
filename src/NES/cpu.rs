@@ -6,7 +6,7 @@ use super::opcode::*;
 use super::opcode::Op::*;
 use enum_primitive::FromPrimitive;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct CPUStatus {
     carry: bool,
     zero: bool,
@@ -186,23 +186,106 @@ impl NESCpu {
     }
 
     pub fn offset_a(&mut self, val: u8) {
-        self.a += val;
+        self.a = self.a.wrapping_add(val);
+
+        if (self.a&0x80) > 0 {
+            self.p.set_negative(true);
+        } else {
+            self.p.set_negative(false);
+        }
+
+        if self.a == 0 {
+            self.p.set_zero(true);
+        } else {
+            self.p.set_zero(false);
+        }
     }
     pub fn offset_x(&mut self, val: u8) {
-        self.x += val;
+        self.x = self.x.wrapping_add(val);
+
+        if (self.x&0x80) > 0 {
+            self.p.set_negative(true);
+        } else {
+            self.p.set_negative(false);
+        }
+
+        if self.x == 0 {
+            self.p.set_zero(true);
+        } else {
+            self.p.set_zero(false);
+        }
     }
     pub fn offset_y(&mut self, val: u8) {
-        self.y += val;
+        self.y = self.y.wrapping_add(val);
+
+        if (self.y&0x80) > 0 {
+            self.p.set_negative(true);
+        } else {
+            self.p.set_negative(false);
+        }
+
+        if self.y == 0 {
+            self.p.set_zero(true);
+        } else {
+            self.p.set_zero(false);
+        }
     }
     pub fn offset_s(&mut self, val: u8) {
-        self.s += val;
+        self.s = self.s.wrapping_add(val);
     }
     pub fn offset_pc(&mut self, val: u16) {
         self.pc = self.pc.wrapping_add(val);
     }
 
-    pub fn do_instruction(&mut self, interconnect: &mut Interconnect) -> bool{
+    pub fn subtract_with_carry(&mut self, lhs: u8, rhs: u8) -> u8 {
+        let mut val = lhs.wrapping_sub(rhs);
+        
+        if self.p.carry {
+            val += 1;
+        }
+        if lhs >= rhs {
+            self.p.set_carry(true);
+        } else {
+            self.p.set_carry(false);
+        }
+        if val == 0 {
+            self.p.set_zero(true);
+        } else {
+            self.p.set_zero(false);
+        }
+        if (val&0x80) > 0 {
+            self.p.set_negative(true);
+        } else {
+            self.p.set_negative(false);
+        }
 
+        val
+    }
+
+    pub fn subtract(&mut self, lhs: u8, rhs: u8) -> u8 {
+        let mut val = lhs.wrapping_sub(rhs);
+        
+        if lhs >= rhs {
+            self.p.set_carry(true);
+        } else {
+            self.p.set_carry(false);
+        }
+        if val == 0 {
+            self.p.set_zero(true);
+        } else {
+            self.p.set_zero(false);
+        }
+        if (val&0x80) > 0 {
+            self.p.set_negative(true);
+        } else {
+            self.p.set_negative(false);
+        }
+
+        val
+    }
+
+    //6502 opcode info http://obelisk.me.uk/6502/reference.html
+    pub fn do_instruction(&mut self, interconnect: &mut Interconnect) -> bool{
         //Read 3 bytes (1st is opcode, 2nd is first operand (if any), 3rd is second operand (if any))
         let op = interconnect.read_mem(self.pc as usize) as u32;
         let imm1 = (interconnect.read_mem((self.pc + 1) as usize) as u32) << 8;
@@ -210,6 +293,10 @@ impl NESCpu {
 
         let opcode = Opcode::new(op | imm1 | imm2);
 
+         println!("pc: 0x{:04X}", self.pc);
+
+        //using a nifty crate that can convert integers to enums
+        //to make pattern matching nicer
         match Op::from_i32(opcode.op() as i32) {
             Some(op) => {
                 print!("{:?} ", op);
@@ -219,7 +306,6 @@ impl NESCpu {
                     //Branch if Plus (adds to the program counter if negative flag is clear)
                     BPLRelative => {
                         if self.p.negative == false {
-                            println!("0x{:04X}", opcode.imm1().cast_with_neg());
                             self.offset_pc(opcode.imm1().cast_with_neg());
                             self.offset_pc(1);
                         } else {
@@ -248,6 +334,13 @@ impl NESCpu {
                         self.offset_pc(1);
                     }
 
+                    //Loads operand into y-index (modifies zero and negatives flags)
+                    LDYImmediate => {
+                        self.set_y(opcode.imm1());
+
+                        self.offset_pc(2);
+                    }
+
                     //Loads operand into x-index (modifies zero and negatives flags)
                     LDXImmediate => {
                         self.set_x(opcode.imm1());
@@ -272,6 +365,44 @@ impl NESCpu {
                         self.offset_pc(3);
                     }
 
+                    //Branch if carry set (adds to the program counter if carry flag is set)
+                    BCSRelative => {
+                        if self.p.carry == true {
+                            self.offset_pc(opcode.imm1().cast_with_neg());
+                            self.offset_pc(1);
+                        } else {
+                            self.offset_pc(2);
+                        }
+                    }
+
+                    //Loads operand into accumulator using absolute indexed addressing
+                    //(modifies zero and negatives flags)
+                    LDAAbsoluteX => {
+                        let base = interconnect.read_absolute(opcode.abs_addr()) as usize;
+                        let val = interconnect.read_mem(base + self.x as usize);
+                        
+                        self.set_a(val);
+
+                        self.offset_pc(3);
+                    }
+
+                    //Compare accumulator with operand
+                    //(modifies carr, zero, and negative flags)
+                    CMPImmediate => {
+                        let a = self.a;
+                        let _ = self.subtract(a, opcode.imm1());
+
+                        self.offset_pc(2);
+                    }
+                    
+                    //Decrements the x-index
+                    //(modifies zero and negative flags)
+                    DEXImplied => {
+                        self.offset_x(0xFF);
+
+                        self.offset_pc(1);
+                    }
+
                     //Clear Decimal Mode (Sets the D flag to false)
                     CLDImplied => {
                         self.p.set_decimal(false);
@@ -280,19 +411,23 @@ impl NESCpu {
                     }
 
                     _ => {
-                        println!("encountered unimplemented opcode: {:?}", op);
+                        println!("unimplemented opcode");
                         return false
                     }
                 }
             }
             
             None => {
-                println!("unknown {:?}, pc: 0x{:04X}", opcode, self.pc);
+                println!("unknown {:?}", opcode);
                 return false
             }
         }
         
-        println!("{:?}, pc: 0x{:04X}", opcode, self.pc);
+        println!("{:?}", opcode);
+
+        println!("a: 0x{:02X}\nx: 0x{:02X}\ny: 0x{:02X}\ns: 0x{:02X}\n{:?}\n\n", 
+                    self.a, self.x, self.y,
+                    self.s, self.p);
 
         true
     }

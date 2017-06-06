@@ -55,7 +55,7 @@ impl NES {
     }
 
     pub fn run(&mut self) {
-        for _ in 0..10 {
+        loop {
             if self.cpu.do_instruction(&mut self.interconnect) == false {
                 break;
             }

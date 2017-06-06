@@ -9,7 +9,7 @@ the registers of other components to the cpu.
 */
 
 pub struct Interconnect {
-    internal_ram: [u8;0x0100],
+    internal_ram: [u8;0x0800],
 
     ppu: NESPpu,
     apu: NESApu, //Can't wait for this (never done audio before)
@@ -21,7 +21,7 @@ pub struct Interconnect {
 impl Interconnect {
     pub fn new() -> Interconnect {
         Interconnect {
-            internal_ram: [0u8;0x0100],
+            internal_ram: [0u8;0x0800],
             
             ppu: NESPpu::new(),
             apu: NESApu::new(),
@@ -50,7 +50,7 @@ impl Interconnect {
             }
 
             0x2000...0x3FFF => {
-                0 //TODO: return ppu registers
+                self.ppu.read_ppu(addr % 0x2007)
             }
 
             0x4000...0x4017 => {
