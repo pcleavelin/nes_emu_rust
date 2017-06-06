@@ -175,7 +175,7 @@ impl NESCpu {
         }
     }
     pub fn set_s(&mut self, val: u8) {
-        self.s = val;
+        self.s = val % 0xFF;
     }
 
     pub fn set_p_u8(&mut self, val: u8) {
@@ -231,7 +231,7 @@ impl NESCpu {
         }
     }
     pub fn offset_s(&mut self, val: u8) {
-        self.s = self.s.wrapping_add(val);
+        self.s = self.s.wrapping_add(val) % 0xFF;
     }
     pub fn offset_pc(&mut self, val: u16) {
         self.pc = self.pc.wrapping_add(val);
@@ -284,6 +284,18 @@ impl NESCpu {
         val
     }
 
+    pub fn push_stack(&mut self, interconnect: &mut Interconnect, val: u8) {
+        interconnect.write_mem(0x100 + self.s as usize, val);
+        self.offset_s(0xFF);
+    }
+
+    pub fn pop_stack(&mut self, interconnect: &mut Interconnect) -> u8 {
+        self.offset_s(1);
+        let val = interconnect.read_mem(0x100 + self.s as usize);
+
+        val
+    }
+
     //6502 opcode info http://obelisk.me.uk/6502/reference.html
     pub fn do_instruction(&mut self, interconnect: &mut Interconnect) -> bool{
         //Read 3 bytes (1st is opcode, 2nd is first operand (if any), 3rd is second operand (if any))
@@ -303,14 +315,35 @@ impl NESCpu {
                 
                 match op {
 
+                    //ORs the accumulator with memory
+                    //(modifies zero and negative flag)
+                    ORAZeroPage => {
+                        let val = self.a | interconnect.read_zero_page(opcode.imm1() as usize);
+
+                        self.set_a(val);
+
+                        self.offset_pc(2);
+                    }
+
                     //Branch if Plus (adds to the program counter if negative flag is clear)
                     BPLRelative => {
                         if self.p.negative == false {
+                            print!("Brancing from 0x{:04x}", self.pc);
                             self.offset_pc(opcode.imm1().cast_with_neg());
-                            self.offset_pc(1);
-                        } else {
-                            self.offset_pc(2);
+                            println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc, opcode.imm1().cast_with_neg());
                         }
+
+                        self.offset_pc(2);
+                    }
+
+                    //Pushes return point onto stack (pc + 3), then sets pc to absolute address
+                    JSRAbsolute => {
+                        let return_point = self.pc.wrapping_add(3);
+                        let addr = opcode.abs_addr() as u16;
+
+                        self.push_stack(interconnect, ((return_point&0xFF00) >> 8) as u8);
+                        self.push_stack(interconnect, (return_point&0xFF) as u8);
+                        self.pc = addr;
                     }
 
                     //Set Interrupt Disable (Sets the I flag to true)
@@ -369,10 +402,9 @@ impl NESCpu {
                     BCSRelative => {
                         if self.p.carry == true {
                             self.offset_pc(opcode.imm1().cast_with_neg());
-                            self.offset_pc(1);
-                        } else {
-                            self.offset_pc(2);
                         }
+
+                        self.offset_pc(2);
                     }
 
                     //Loads operand into accumulator using absolute indexed addressing
@@ -401,6 +433,15 @@ impl NESCpu {
                         self.offset_x(0xFF);
 
                         self.offset_pc(1);
+                    }
+                    
+                    //Branch if not equal (adds to the program counter if zero flag is not set)
+                    BNERelative => {
+                        if self.p.zero == false {
+                            self.offset_pc(opcode.imm1().cast_with_neg());
+                        }
+
+                        self.offset_pc(2);
                     }
 
                     //Clear Decimal Mode (Sets the D flag to false)
