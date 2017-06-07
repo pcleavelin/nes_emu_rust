@@ -50,7 +50,7 @@ impl Interconnect {
             }
 
             0x2000...0x3FFF => {
-                self.ppu.read_ppu(addr % 0x2007)
+                self.ppu.read_ppu((addr - 0x2000) % 8)
             }
 
             0x4000...0x4017 => {
@@ -171,5 +171,9 @@ impl Interconnect {
     pub fn write_indexed_indirect_y(&mut self, addr: usize, y: usize, val: u8) {
         let pointer: usize = self.read_mem((addr + y) % 256) as usize + self.read_mem((addr + y + 1) % 256) as usize * 256;
         self.write_mem(pointer, val);
+    }
+
+    pub fn ppu(&mut self) -> &mut NESPpu {
+        &mut self.ppu
     }
 }

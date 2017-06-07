@@ -9,10 +9,12 @@ mod integer_casting;
 
 use self::cpu::*;
 use self::interconnect::*;
+use minifb::{WindowOptions, Window, Key, Scale};
 
 pub struct NES {
     cpu: NESCpu,
     interconnect: Interconnect,
+    window: Window,
 }
 
 impl NES {
@@ -20,6 +22,12 @@ impl NES {
         NES {
             cpu: NESCpu::new(),
             interconnect: Interconnect::new(),
+            window: Window::new("NES Emulator", ppu::WIDTH, ppu::HEIGHT, WindowOptions {
+                borderless: false,
+                title: true,
+                resize: false,
+                scale: Scale::X1,
+            }).expect("Failed to create window"),
         }
     }
 
@@ -55,10 +63,12 @@ impl NES {
     }
 
     pub fn run(&mut self) {
-        loop {
+        while self.window.is_open() && !self.window.is_key_down(Key::Escape) {
             if self.cpu.do_instruction(&mut self.interconnect) == false {
                 break;
             }
+
+            self.interconnect.ppu().do_cycle(&mut self.window);
         }
     }
 }

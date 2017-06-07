@@ -1,3 +1,8 @@
+use minifb::{WindowOptions, Window, Key, Scale};
+
+pub const WIDTH: usize = 341;
+pub const HEIGHT: usize = 240;
+
 pub struct NESPpu {
     ctrl: u8,
     mask: u8,
@@ -8,6 +13,8 @@ pub struct NESPpu {
     addr: u8,
     data: u8,
     oam_dma: u8,
+
+    vram: Vec<u32>,
 }
 
 impl NESPpu {
@@ -26,6 +33,8 @@ impl NESPpu {
             data: 0,
             //odd_frame: false,
             oam_dma: 0,
+
+            vram: vec![0u32; WIDTH*HEIGHT],
         }
     }
 
@@ -34,7 +43,7 @@ impl NESPpu {
     pub fn read_ppu(&self, addr: usize) -> u8 {
         match addr {
             //Write-Only
-            0x2000 => {
+            0 => {
                 //I'm currently unclear as to which value
                 //should be returned here, since both $2005 and $2006
                 //are labeled as the latch. So for now we'll just
@@ -44,12 +53,12 @@ impl NESPpu {
             }
             
             //Write-Only
-            0x2001 => {
+            1 => {
                 self.scroll
             }
             
             //Read-Only
-            0x2002 => {
+            2 => {
                 //This one is interesting, since only the top 3 bits
                 //actually contain the status register
 
@@ -57,27 +66,27 @@ impl NESPpu {
             }
             
             //Write-Only
-            0x2003 => {
+            3 => {
                 self.scroll
             }
             
             //Read-Write
-            0x2004 => {
+            4 => {
                 self.oam_data
             }
             
             //Write-Only
-            0x2005 => {
+            5 => {
                 self.scroll
             }
             
             //Write-Only
-            0x2006 => {
+            6 => {
                 self.scroll
             }
             
             //Read-Write
-            0x2007 => {
+            7 => {
                 self.data
             }
 
@@ -90,5 +99,15 @@ impl NESPpu {
                 self.scroll
             }
         }
+    }
+
+    pub fn do_cycle(&mut self, window: &mut Window) {
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                self.vram[x + (y*WIDTH)] = (((x ^ y) & 0xff) * 1) as u32;
+            }
+        }
+        
+        window.update_with_buffer(&self.vram);
     }
 }
