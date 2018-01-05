@@ -26,7 +26,7 @@ impl NES {
                 borderless: false,
                 title: true,
                 resize: false,
-                scale: Scale::X1,
+                scale: Scale::X4,
             }).expect("Failed to create window"),
         }
     }
@@ -40,6 +40,7 @@ impl NES {
         self.cpu.set_a(0);
         self.cpu.set_x(0);
         self.cpu.set_y(0);
+        //self.cpu.set_pc(0);
 
         self.interconnect.write_mem(0x4015, 0); //frame irq enabled
         self.interconnect.write_mem(0x4017, 0); //all channels disabled
@@ -63,12 +64,22 @@ impl NES {
     }
 
     pub fn run(&mut self) {
+        let addr_lo = self.interconnect.read_absolute(0xFFFE) as u16;
+        let addr_hi = self.interconnect.read_absolute(0xFFFF) as u16;
+
+        self.cpu.set_pc(((addr_hi << 8) | addr_lo)-0);
+
         while self.window.is_open() && !self.window.is_key_down(Key::Escape) {
             if self.cpu.do_instruction(&mut self.interconnect) == false {
                 break;
+                self.cpu.offset_pc(1);
             }
 
-            self.interconnect.ppu().do_cycle(&mut self.window);
+            self.interconnect.update(&mut self.window);
+
+            if self.interconnect.ppu().cycles() == 241 && self.interconnect.ppu().ctrl()&0x80 > 0 {
+                self.cpu.do_nmi(&mut self.interconnect);
+            }
         }
     }
 }

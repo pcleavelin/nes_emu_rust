@@ -3,7 +3,8 @@ use std::io::Read;
 use std::vec::Vec;
 
 pub struct NESCart {
-    data: Vec<u8>
+    data: Vec<u8>,
+    ram: [u8; 0x9000]
 }
 
 impl NESCart {
@@ -21,30 +22,53 @@ impl NESCart {
         }
 
         NESCart {
-            data: data
+            data: data,
+            ram: [0x0; 0x9000]
         }
     }
 
     pub fn none() -> NESCart{
         NESCart {
-            data: Vec::new()
+            data: Vec::new(),
+            ram: [0x0; 0x9000]
         }
     }
 
+    pub fn get_pattern_table(&self, num: usize) -> &[u8] {
+        let addr = self.data[4] as usize * 16000 + 0x10 + (0x1000*num);
+        return &self.data.as_slice()[addr..(addr+0x1000)];
+    }
+
     pub fn read(&self, addr: usize) -> u8 {
-        if addr > self.data.len() {
+        if addr >= self.data.len() {
             println!("error reading from cart: reached end of rom!");
             return 0;
         }
         self.data[addr]
     }
 
+    pub fn read_ram(&self, addr: usize) -> u8 {
+        if addr >= self.ram.len() {
+            println!("error reading from cart: reached end of ram!");
+            return 0;
+        }
+        self.ram[addr]
+    }
+
+    pub fn write_ram(&mut self, addr: usize, val: u8) {
+        if addr >= self.ram.len() {
+            println!("error writing to cart: reached end of ram!");
+            return;
+        }
+        self.ram[addr] = val;
+    }
+
     //Header info obtained from NESDev wiki
     //https://wiki.nesdev.com/w/index.php/INES 
     pub fn print_header(&self) {
         println!("ROM Size:");
-        println!("Size of PRG ROM * 16KB: 0x{:0X}", self.data[4] as u16 * 16000);
-        println!("Size of CHR ROM * 8KB:  0x{:0X}", self.data[5] as u16 * 8000);
+        println!("Size of PRG ROM * 16KB: 0x{:0X}", self.data[4] as u16);
+        println!("Size of CHR ROM * 8KB:  0x{:0X}", self.data[5] as u16);
 
         println!("\nFlags:");
         print!("Mirroring: ");

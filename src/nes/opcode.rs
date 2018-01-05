@@ -17,6 +17,7 @@ enum_from_primitive! {
         ORAZeroPageX   = 0x15,
         ASLZeroPageX   = 0x16,
         CLCImplied     = 0x18,
+        ORAAbsoluteY   = 0x19,
         ORAAbsoluteX   = 0x1D,
         ASLAbsoluteX   = 0x1E,
         JSRAbsolute    = 0x20,
