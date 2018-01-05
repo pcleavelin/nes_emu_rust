@@ -26,7 +26,7 @@ impl NES {
                 borderless: false,
                 title: true,
                 resize: false,
-                scale: Scale::X4,
+                scale: Scale::X2,
             }).expect("Failed to create window"),
         }
     }
@@ -64,10 +64,13 @@ impl NES {
     }
 
     pub fn run(&mut self) {
-        let addr_lo = self.interconnect.read_absolute(0xFFFE) as u16;
-        let addr_hi = self.interconnect.read_absolute(0xFFFF) as u16;
+        let addr_lo = self.interconnect.read_absolute(0xFFFC) as u16;
+        let addr_hi = self.interconnect.read_absolute(0xFFFD) as u16;
 
-        self.cpu.set_pc(((addr_hi << 8) | addr_lo)-0);
+        let restart_vector = ((addr_hi << 8) | addr_lo)+0;
+        println!("Jumping to restart vector {:04X}", restart_vector);
+
+        self.cpu.set_pc(restart_vector);
 
         while self.window.is_open() && !self.window.is_key_down(Key::Escape) {
             if self.cpu.do_instruction(&mut self.interconnect) == false {

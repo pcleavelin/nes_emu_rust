@@ -191,7 +191,7 @@ impl NESPpu {
                 } else {
                     nt1
                 };
-                let pt = if self.ctrl&0x8 == 0 {
+                let pt = if self.ctrl&0x8 == 1 {
                     pt0
                 } else {
                     pt1

@@ -17,7 +17,7 @@ impl NESCart {
         let mut data: Vec<u8> = Vec::new();
 
         match rom_file.read_to_end(&mut data) {
-            Ok(size) => println!("read rom {} bytes", size),
+            Ok(size) => println!("read rom {:04X} bytes", size),
             Err(why) => panic!("error reading rom: {}", why),
         }
 

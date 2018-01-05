@@ -110,11 +110,11 @@ impl Interconnect {
             }
 
             0x8000...0xBFFF => {
-                self.cart.read(addr - (0x8000 - 0x10))
+                self.cart.read((addr - 0x8000) + 0x10)
             }
 
             0xC000...0xFFFF => {
-                self.cart.read(addr - (0xC000 - 0x10))
+                self.cart.read((addr - 0xC000) + 0x4000 + 0x10)
             }
 
             _ => {

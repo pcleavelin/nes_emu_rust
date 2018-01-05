@@ -428,8 +428,8 @@ impl NESCpu {
         self.push_stack(interconnect, ((return_point&0xFF00) >> 8) as u8);
         self.push_stack(interconnect, (return_point&0xFF) as u8);
 
-        let addr_lo = interconnect.read_absolute(0xFFFC) as u16;
-        let addr_hi = interconnect.read_absolute(0xFFFD) as u16;
+        let addr_lo = interconnect.read_absolute(0xFFFA) as u16;
+        let addr_hi = interconnect.read_absolute(0xFFFB) as u16;
 
         self.pc = (addr_hi << 8) | addr_lo;
     }
@@ -470,9 +470,10 @@ impl NESCpu {
 
                     Op::ORAIndirectX => {
                         let mut val = interconnect.read_indexed_indirect_x(opcode.imm1() as usize, self.x as usize);
-                        val = self.a | val;
+                        let a = self.a;
+                        val = self.or(a, val);
 
-                        self.set_a(val);
+                        self.a = val;
 
                         self.offset_pc(2);
                     }
@@ -480,9 +481,11 @@ impl NESCpu {
                     //ORs the accumulator with memory
                     //(modifies zero and negative flag)
                     Op::ORAZeroPage => {
-                        let val = self.a | interconnect.read_zero_page(opcode.imm1() as usize);
+                        let mut val = self.a | interconnect.read_zero_page(opcode.imm1() as usize);
+                        let a = self.a;
+                        val = self.or(a, val);
 
-                        self.set_a(val);
+                        self.a = val;
 
                         self.offset_pc(2);
                     }
@@ -520,7 +523,7 @@ impl NESCpu {
 
                         val = self.or(a, val);
 
-                        self.set_a(val);
+                        self.a = val;
 
                         self.offset_pc(3);
                     }
@@ -553,7 +556,7 @@ impl NESCpu {
 
                         let val = self.and(a, val);
 
-                        self.set_a(val);
+                        self.a = val;
 
                         self.offset_pc(2);
                     }
@@ -563,7 +566,7 @@ impl NESCpu {
                         let a = self.a;
                         let val = self.and(a, opcode.imm1());
 
-                        self.set_a(val);
+                        self.a = val;
 
                         self.offset_pc(2);
                     }
@@ -587,7 +590,7 @@ impl NESCpu {
                         let a = self.a;
                         val = self.add_with_carry(a, val);
 
-                        self.set_a(val);
+                        self.a = val;
 
                         self.offset_pc(3);
                     }
