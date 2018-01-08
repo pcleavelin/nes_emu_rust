@@ -26,7 +26,7 @@ impl NES {
                 borderless: false,
                 title: true,
                 resize: false,
-                scale: Scale::X2,
+                scale: Scale::X4,
             }).expect("Failed to create window"),
         }
     }
@@ -48,6 +48,14 @@ impl NES {
         for i in 0..0xF {
             self.interconnect.write_mem(0x4000 + i, 0);
         }
+
+        let addr_lo = self.interconnect.read_absolute(0xFFFC) as u16;
+        let addr_hi = self.interconnect.read_absolute(0xFFFD) as u16;
+
+        let restart_vector = ((addr_hi << 8) | addr_lo)+0;
+        println!("Jumping to restart vector {:04X}", restart_vector);
+
+        self.cpu.set_pc(restart_vector);
     }
 
     pub fn soft_restart(&mut self) {
@@ -64,24 +72,23 @@ impl NES {
     }
 
     pub fn run(&mut self) {
-        let addr_lo = self.interconnect.read_absolute(0xFFFC) as u16;
-        let addr_hi = self.interconnect.read_absolute(0xFFFD) as u16;
-
-        let restart_vector = ((addr_hi << 8) | addr_lo)+0;
-        println!("Jumping to restart vector {:04X}", restart_vector);
-
-        self.cpu.set_pc(restart_vector);
-
+        let mut do_int = true;
         while self.window.is_open() && !self.window.is_key_down(Key::Escape) {
             if self.cpu.do_instruction(&mut self.interconnect) == false {
+                //self.hard_restart();
+                //self.cpu.offset_pc(1);
                 break;
-                self.cpu.offset_pc(1);
             }
 
             self.interconnect.update(&mut self.window);
 
             if self.interconnect.ppu().cycles() == 241 && self.interconnect.ppu().ctrl()&0x80 > 0 {
                 self.cpu.do_nmi(&mut self.interconnect);
+            }
+
+            if do_int {
+                do_int = false;
+                //self.cpu.do_nmi(&mut self.interconnect);
             }
         }
     }

@@ -153,6 +153,78 @@ impl NESCpu {
         result
     }
 
+    pub fn shift_right(&mut self, val: u8) -> u8 {
+        let result = val >> 1;
+
+        if (val&1) > 0 {
+            self.p.set_carry(true);
+        } else {
+            self.p.set_carry(false);
+        }
+
+        if (result&0x80) > 0 {
+            self.p.set_negative(true);
+        } else {
+            self.p.set_negative(false);
+        }
+
+        if val == 0 {
+            self.p.set_zero(true);
+        } else {
+            self.p.set_zero(false);
+        }
+
+        result
+    }
+
+    pub fn rol(&mut self, val: u8) -> u8 {
+        let result = (val << 1) | self.p.carry as u8;
+
+        if (val&0x80) > 0 {
+            self.p.set_carry(true);
+        } else {
+            self.p.set_carry(false);
+        }
+
+        if (result&0x80) > 0 {
+            self.p.set_negative(true);
+        } else {
+            self.p.set_negative(false);
+        }
+
+        if val == 0 {
+            self.p.set_zero(true);
+        } else {
+            self.p.set_zero(false);
+        }
+
+        result
+    }
+
+    pub fn ror(&mut self, val: u8) -> u8 {
+        let result = (val >> 1) | ((self.p.carry as u8) << 7);
+
+        if (val&0x1) > 0 {
+            self.p.set_carry(true);
+        } else {
+            self.p.set_carry(false);
+        }
+
+        if (result&0x80) > 0 {
+            self.p.set_negative(true);
+        } else {
+            self.p.set_negative(false);
+        }
+
+        if val == 0 {
+            self.p.set_zero(true);
+        } else {
+            self.p.set_zero(false);
+        }
+
+        result
+    }
+
     pub fn set_pc(&mut self, val: u16) {
         self.pc = val;
     }
@@ -259,7 +331,7 @@ impl NESCpu {
         }
     }
     pub fn offset_s(&mut self, val: u8) {
-        self.s = self.s.wrapping_add(val) % 0xFF;
+        self.s = (self.s.wrapping_add(val) as u16 % 0x100) as u8;
     }
     pub fn offset_pc(&mut self, val: u16) {
         self.pc = self.pc.wrapping_add(val);
@@ -328,12 +400,13 @@ impl NESCpu {
     }
 
     pub fn subtract_with_carry(&mut self, lhs: u8, rhs: u8) -> u8 {
-        let mut val = lhs.wrapping_sub(rhs);
+        let mut val = (lhs as u16).wrapping_sub((rhs as u16));
         
-        if self.p.carry {
-            val += 1;
+        if !self.p.carry {
+            val = val.wrapping_sub(1);
         }
-        if lhs >= rhs {
+
+        if val > 255 {
             self.p.set_carry(true);
         } else {
             self.p.set_carry(false);
@@ -349,11 +422,11 @@ impl NESCpu {
             self.p.set_negative(false);
         }
 
-        val
+        (val&0xFF) as u8
     }
 
     pub fn subtract(&mut self, lhs: u8, rhs: u8) -> u8 {
-        let mut val = lhs.wrapping_sub(rhs);
+        let val = lhs.wrapping_sub(rhs);
         
         if lhs >= rhs {
             self.p.set_carry(true);
@@ -375,7 +448,7 @@ impl NESCpu {
     }
 
     pub fn and(&mut self, lhs: u8, rhs: u8) -> u8 {
-        let mut val = lhs & rhs;
+        let val = lhs & rhs;
         
         if val == 0 {
             self.p.set_zero(true);
@@ -392,7 +465,24 @@ impl NESCpu {
     }
 
     pub fn or(&mut self, lhs: u8, rhs: u8) -> u8 {
-        let mut val = lhs | rhs;
+        let val = lhs | rhs;
+        
+        if val == 0 {
+            self.p.set_zero(true);
+        } else {
+            self.p.set_zero(false);
+        }
+        if (val&0x80) > 0 {
+            self.p.set_negative(true);
+        } else {
+            self.p.set_negative(false);
+        }
+
+        val
+    }
+
+    pub fn eor(&mut self, lhs: u8, rhs: u8) -> u8 {
+        let val = lhs ^ rhs;
         
         if val == 0 {
             self.p.set_zero(true);
@@ -424,9 +514,9 @@ impl NESCpu {
         let return_point = self.pc;
 
         let p = self.p.to_u8();
-        self.push_stack(interconnect, p);
         self.push_stack(interconnect, ((return_point&0xFF00) >> 8) as u8);
         self.push_stack(interconnect, (return_point&0xFF) as u8);
+        self.push_stack(interconnect, p);
 
         let addr_lo = interconnect.read_absolute(0xFFFA) as u16;
         let addr_hi = interconnect.read_absolute(0xFFFB) as u16;
@@ -443,7 +533,7 @@ impl NESCpu {
 
         let opcode = Opcode::new(op | imm1 | imm2);
 
-         println!("pc: 0x{:04X}", self.pc);
+        println!("pc: 0x{:04X}", self.pc);
 
         //using a nifty crate that can convert integers to enums
         //to make pattern matching nicer
@@ -455,17 +545,23 @@ impl NESCpu {
 
                     //IMPLIED
                     Op::BRKImmediate => {
-                        let return_point = self.pc.wrapping_add(1);
+                        if self.p.irq_disable == false {
+                            let return_point = self.pc.wrapping_add(1);
 
-                        let p = self.p.to_u8();
-                        self.push_stack(interconnect, ((return_point&0xFF00) >> 8) as u8);
-                        self.push_stack(interconnect, (return_point&0xFF) as u8);
-                        self.push_stack(interconnect, p);
+                            let p = self.p.to_u8();
+                            self.push_stack(interconnect, ((return_point&0xFF00) >> 8) as u8);
+                            self.push_stack(interconnect, (return_point&0xFF) as u8);
+                            self.push_stack(interconnect, p);
 
-                        let addr_lo = interconnect.read_absolute(0xFFFE) as u16;
-                        let addr_hi = interconnect.read_absolute(0xFFFF) as u16;
+                            let addr_lo = interconnect.read_absolute(0xFFFE) as u16;
+                            let addr_hi = interconnect.read_absolute(0xFFFF) as u16;
 
-                        self.pc = (addr_hi << 8) | addr_lo;
+                            self.pc = (addr_hi << 8) | addr_lo;
+                        } else {
+                            self.offset_pc(1);
+                        }
+
+                        return false;
                     }
 
                     Op::ORAIndirectX => {
@@ -481,9 +577,18 @@ impl NESCpu {
                     //ORs the accumulator with memory
                     //(modifies zero and negative flag)
                     Op::ORAZeroPage => {
-                        let mut val = self.a | interconnect.read_zero_page(opcode.imm1() as usize);
+                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
                         let a = self.a;
                         val = self.or(a, val);
+
+                        self.a = val;
+
+                        self.offset_pc(2);
+                    }
+
+                    Op::ORAImmediate => {
+                        let a = self.a;
+                        let val = self.or(a, opcode.imm1());
 
                         self.a = val;
 
@@ -497,6 +602,14 @@ impl NESCpu {
                         interconnect.write_zero_page(opcode.imm1() as usize, val);
 
                         self.offset_pc(2);
+                    }
+
+                    Op::ASLAccumulator => {
+                        let a = self.a;
+
+                        self.a = self.shift_left(a);
+
+                        self.offset_pc(1);
                     }
 
                     //Branch if Plus (adds to the program counter if negative flag is clear)
@@ -528,14 +641,29 @@ impl NESCpu {
                         self.offset_pc(3);
                     }
 
+                    Op::ORAAbsoluteX => {
+                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let a = self.a;
+
+                        val = self.or(a, val);
+
+                        self.a = val;
+
+                        self.offset_pc(3);
+                    }
+
                     //Pushes return point onto stack (pc + 3), then sets pc to absolute address
                     Op::JSRAbsolute => {
-                        let return_point = self.pc.wrapping_add(3);
+                        print!("Jumping from 0x{:04X} --- ", self.pc);
+
+                        let return_point = self.pc.wrapping_add(2);
                         let addr = opcode.abs_addr() as u16;
 
                         self.push_stack(interconnect, ((return_point&0xFF00) >> 8) as u8);
                         self.push_stack(interconnect, (return_point&0xFF) as u8);
                         self.pc = addr;
+
+                        println!("Jumping to 0x{:04X}", self.pc);
                     }
                     
                     Op::BITZeroPage => {
@@ -561,6 +689,15 @@ impl NESCpu {
                         self.offset_pc(2);
                     }
 
+                    Op::ROLZeroPage => {
+                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        val = self.rol(val);
+
+                        interconnect.write_zero_page(opcode.imm1() as usize, val);
+
+                        self.offset_pc(2);
+                    }
+
                     //AND Accumulator with immediate
                     Op::ANDImmediate => {
                         let a = self.a;
@@ -571,18 +708,190 @@ impl NESCpu {
                         self.offset_pc(2);
                     }
 
+                    Op::ROLAccumulator => {
+                        let a = self.a;
+                        self.a = self.rol(a);
+
+                        self.offset_pc(1);
+                    }
+
+                    Op::BITAbsolute => {
+                        let val = interconnect.read_absolute(opcode.abs_addr() as usize);
+                        let a = self.a;
+
+                        let _ = self.and(a, val);
+                        
+                        self.p.set_overflow((val&0x40) > 0);
+                        self.p.set_negative((val&0x80) > 0);
+
+                        self.offset_pc(3);
+                    }
+
+                    Op::ROLAbsolute => {
+                        let mut val = interconnect.read_absolute(opcode.abs_addr() as usize);
+                        val = self.rol(val);
+
+                        interconnect.write_absolute(opcode.abs_addr(), val);
+
+                        self.offset_pc(3);
+                    }
+
+                    Op::BMIRelative => {
+                        if self.p.negative == true {
+                            print!("Branching from 0x{:04X}", self.pc);
+                            self.offset_pc(opcode.imm1().cast_with_neg());
+                            println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
+                        }
+
+                        self.offset_pc(2);
+                    }
+
+                    Op::ANDAbsoluteY => {
+                        let mut val = interconnect.read_absolute_indexed_y(opcode.abs_addr(), self.y as usize);
+                        let a = self.a;
+
+                        let val = self.and(a, val);
+
+                        self.a = val;
+
+                        self.offset_pc(3);
+                    }
+
+                    Op::ANDAbsoluteX => {
+                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let a = self.a;
+
+                        let val = self.and(a, val);
+
+                        self.a = val;
+
+                        self.offset_pc(3);
+                    }
+
+                    Op::SECImplied => {
+                        self.p.set_carry(true);
+
+                        self.offset_pc(1);
+                    }
+
+                    Op::RTIImplied => {
+                        let p = self.pop_stack(interconnect) as u8;
+                        let lo = self.pop_stack(interconnect) as u16;
+                        let hi = self.pop_stack(interconnect) as u16;
+                        let ret = ((hi << 8) | lo).wrapping_sub(1);
+
+                        self.p = CPUStatus::from(p);
+                        self.pc = ret;
+
+                        self.offset_pc(1);
+                    }
+
+                    Op::LSRZeroPage => {
+                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        val = self.shift_right(val);
+
+                        interconnect.write_zero_page(opcode.imm1() as usize, val);
+
+                        self.offset_pc(2);
+                    }
+
+                    Op::EORZeroPage => {
+                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let a = self.a;
+                        val = self.eor(a, val);
+
+                        self.a = val;
+
+                        self.offset_pc(2);
+                    }
+
+                    Op::PHAImplied => {
+                        let a = self.a;
+                        self.push_stack(interconnect, a);
+
+                        self.offset_pc(1);
+                    }
+
+                    Op::LSRAccumulator => {
+                        let a = self.a;
+                        self.a = self.shift_right(a);
+
+                        self.offset_pc(1);
+                    }
+
                     Op::JMPAbsolute => {
                         self.pc = opcode.abs_addr() as u16;
                     }
 
+                    Op::EORAbsolute => {
+                        let val = interconnect.read_absolute(opcode.abs_addr() as usize);
+                        let a = self.a;
+
+                        let _ = self.eor(a, val);
+
+                        self.offset_pc(3);
+                    }
+
+                    Op::BVCRelative => {
+                        if self.p.overflow == false {
+                            print!("Branching from 0x{:04X}", self.pc);
+                            self.offset_pc(opcode.imm1().cast_with_neg());
+                            println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
+                        }
+
+                        self.offset_pc(2);
+                    }
+
                     Op::RTSImplied => {
-                        let hi = self.pop_stack(interconnect) as u16;
+                        print!("Returning from 0x{:04X} sp: 0x{:04X} -- ", self.pc, self.s);
+
                         let lo = self.pop_stack(interconnect) as u16;
-                        let ret = ((hi << 8) | lo).wrapping_sub(1);
+                        let hi = self.pop_stack(interconnect) as u16;
+                        let ret = (hi << 8) | lo;
 
                         self.pc = ret;
 
-                        println!("S: {:04X}", self.s);
+                        self.offset_pc(1);
+
+                        //println!("S: {:04X}", self.s);
+                        println!("Returning to 0x{:04X} - sp: 0x{:04X}", self.pc, self.s);
+                    }
+
+                    Op::ADCZeroPage => {
+                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let a = self.a;
+                        val = self.add_with_carry(a, val);
+
+                        self.a = val;
+
+                        self.offset_pc(2);
+                    }
+
+                    Op::RORZeroPage => {
+                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        
+                        val = self.ror(val);
+
+                        interconnect.write_zero_page(opcode.imm1() as usize, val);
+
+                        self.offset_pc(2);
+                    }
+
+                    Op::PLAImplied => {
+                        let val = self.pop_stack(interconnect);
+
+                        self.set_a(val);
+
+                        self.offset_pc(1);
+                    }
+
+                    Op::ADCImmediate => {
+                        let a = self.a;
+                        let val = self.add_with_carry(a, opcode.imm1());
+
+                        self.a = val;
+
+                        self.offset_pc(2);
                     }
 
                     Op::ADCAbsolute => {
@@ -595,11 +904,57 @@ impl NESCpu {
                         self.offset_pc(3);
                     }
 
+                    Op::RORAbsolute => {
+                        let mut val = interconnect.read_absolute(opcode.abs_addr());
+                        
+                        val = self.ror(val);
+
+                        interconnect.write_absolute(opcode.abs_addr(), val);
+
+                        self.offset_pc(3);
+                    }
+
                     //Set Interrupt Disable (Sets the I flag to true)
                     Op::SEIImplied => {
                         self.p.set_irq_disable(true);
 
                         self.offset_pc(1);
+                    }
+
+                    Op::ADCAbsoluteY => {
+                        let mut val = interconnect.read_absolute_indexed_y(opcode.abs_addr(), self.y as usize);
+                        let a = self.a;
+                        val = self.add_with_carry(a, val);
+
+                        self.a = val;
+
+                        self.offset_pc(3);
+                    }
+
+                    Op::ADCAbsoluteX => {
+                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let a = self.a;
+                        val = self.add_with_carry(a, val);
+
+                        self.a = val;
+
+                        self.offset_pc(3);
+                    }
+
+                    Op::RORAbsoluteX => {
+                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr(), self.x as usize);
+                        
+                        val = self.ror(val);
+
+                        interconnect.write_absolute_indexed_x(opcode.abs_addr(), self.x as usize, val);
+
+                        self.offset_pc(3);
+                    }
+
+                    Op::JMPAbsIndirect => {
+                        let addr = interconnect.read_absolute(opcode.abs_addr()) as u16 | ((interconnect.read_absolute(opcode.abs_addr() + 1) as u16) << 8);
+
+                        self.pc = addr;
                     }
 
                     Op::STYZeroPage => {
@@ -626,11 +981,40 @@ impl NESCpu {
                         self.offset_pc(1);
                     }
 
+                    Op::TXAImplied => {
+                        let x = self.x;
+                        self.set_a(x);
+
+                        self.offset_pc(1);
+                    }
+
+                    Op::STYAbsolute => {
+                        interconnect.write_absolute(opcode.abs_addr(), self.y);
+
+                        self.offset_pc(3);
+                    }
+
+                    Op::STXAbsolute => {
+                        interconnect.write_absolute(opcode.abs_addr(), self.x);
+
+                        self.offset_pc(3);
+                    }
+
                     //Store Accumulator (Stores a into memory with absolute addressing)
                     Op::STAAbsolute => {
                         interconnect.write_absolute(opcode.abs_addr(), self.a);
 
                         self.offset_pc(3);
+                    }
+
+                    Op::BCCRelative => {
+                        if self.p.carry == false {
+                            print!("Branching from 0x{:04X}", self.pc);
+                            self.offset_pc(opcode.imm1().cast_with_neg());
+                            println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
+                        }
+
+                        self.offset_pc(2);
                     }
 
                     Op::STAIndirectY => {
@@ -653,11 +1037,25 @@ impl NESCpu {
                         self.offset_pc(1);
                     }
 
+                    Op::STAAbsoluteY => {
+                        interconnect.write_absolute_indexed_y(opcode.abs_addr(), self.y as usize, self.a);
+
+                        self.offset_pc(3);
+                    }
+
                     //Transfers x-index into stack pointer
                     Op::TXSImplied => {
                         self.s = self.x;
 
+                        //println!("TXS sp: 0x{:04X}", self.s);
+
                         self.offset_pc(1);
+                    }
+
+                    Op::STAAbsoluteX => {
+                        interconnect.write_absolute_indexed_x(opcode.abs_addr(), self.x as usize, self.a);
+
+                        self.offset_pc(3);
                     }
 
                     //Loads operand into y-index (modifies zero and negatives flags)
@@ -670,6 +1068,14 @@ impl NESCpu {
                     //Loads operand into x-index (modifies zero and negatives flags)
                     Op::LDXImmediate => {
                         self.set_x(opcode.imm1());
+
+                        self.offset_pc(2);
+                    }
+
+                    Op::LDYZeroPage => {
+                        let val = interconnect.read_zero_page(opcode.imm1() as usize);
+
+                        self.set_y(val);
 
                         self.offset_pc(2);
                     }
@@ -697,6 +1103,30 @@ impl NESCpu {
                         self.offset_pc(2);
                     }
 
+                    Op::TAXImplied => {
+                        let a = self.a;
+                        self.set_x(a);
+
+                        self.offset_pc(1);
+                    }
+
+                    Op::LDYAbsolute => {
+                        let val = interconnect.read_absolute(opcode.abs_addr());
+
+                        self.set_y(val);
+
+                        self.offset_pc(3);
+                    }
+
+
+                    Op::LDXAbsolute => {
+                        let val = interconnect.read_absolute(opcode.abs_addr());
+
+                        self.set_x(val);
+
+                        self.offset_pc(3);
+                    }
+
                     Op::LDAZeroPage => {
                         let val = interconnect.read_zero_page(opcode.imm1() as usize);
 
@@ -722,6 +1152,14 @@ impl NESCpu {
                             self.offset_pc(opcode.imm1().cast_with_neg());
                             println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
                         }
+
+                        self.offset_pc(2);
+                    }
+
+                    Op::LDAIndirectY => {
+                        let val = interconnect.read_indexed_indirect_y(opcode.imm1() as usize, self.y as usize);
+
+                        self.set_a(val);
 
                         self.offset_pc(2);
                     }
@@ -762,11 +1200,44 @@ impl NESCpu {
                         self.offset_pc(3);
                     }
 
+                    Op::LDXAbsoluteY => {
+                        let val = interconnect.read_absolute_indexed_y(opcode.abs_addr(), self.y as usize);
+                        
+                        self.set_x(val);
+
+                        self.offset_pc(3);
+                    }
+
                     //Compare y-index with operand
                     //(modifies carry, zero, and negative flags)
                     Op::CPYImmediate => {
                         let y = self.y;
                         let _ = self.subtract(y, opcode.imm1());
+
+                        self.offset_pc(2);
+                    }
+
+                    Op::CMPIndirectX => {
+                        let val = interconnect.read_indexed_indirect_x(opcode.imm1() as usize, self.x as usize);
+                        let a = self.a;
+                        let _ = self.subtract(a, val);
+
+                        self.offset_pc(2);
+                    }
+
+                    Op::CMPZeroPage => {
+                        let val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let a = self.a;
+                        let _ = self.subtract(a, val);
+
+                        self.offset_pc(2);
+                    }
+
+                    Op::DECZeroPage => {
+                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        val = self.subtract(val, 1);
+
+                        interconnect.write_zero_page(opcode.imm1() as usize, val);
 
                         self.offset_pc(2);
                     }
@@ -802,6 +1273,15 @@ impl NESCpu {
                         self.offset_pc(3);
                     }
                     
+                    Op::DECAbsolute => {
+                        let mut val = interconnect.read_absolute(opcode.abs_addr() as usize);
+                        val = self.subtract(val, 1);
+
+                        interconnect.write_absolute(opcode.abs_addr() as usize, val);
+
+                        self.offset_pc(3);
+                    }
+
                     //Branch if not equal (adds to the program counter if zero flag is not set)
                     Op::BNERelative => {
                         if self.p.zero == false {
@@ -813,6 +1293,15 @@ impl NESCpu {
                         self.offset_pc(2);
                     }
 
+                    Op::DECZeroPageX => {
+                        let mut val = interconnect.read_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize);
+                        val = self.subtract(val, 1);
+
+                        interconnect.write_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize, val);
+
+                        self.offset_pc(2);
+                    }
+
                     //Clear Decimal Mode (Sets the D flag to false)
                     Op::CLDImplied => {
                         self.p.set_decimal(false);
@@ -820,9 +1309,34 @@ impl NESCpu {
                         self.offset_pc(1);
                     }
 
+                    Op::CMPAbsoluteY => {
+                        let a = self.a;
+                        let val = interconnect.read_absolute_indexed_y(opcode.abs_addr() as usize, self.y as usize);
+                        let _ = self.subtract(a, val);
+
+                        self.offset_pc(3);
+                    }
+
+                    Op::DECAbsoluteX => {
+                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr() as usize, self.x as usize);
+                        val = self.subtract(val, 1);
+
+                        interconnect.write_absolute_indexed_x(opcode.abs_addr() as usize, self.x as usize, val);
+
+                        self.offset_pc(3);
+                    }
+
                     Op::CPXImmediate => {
                         let x = self.x;
                         let _ = self.subtract(x, opcode.imm1());
+
+                        self.offset_pc(2);
+                    }
+
+                    Op::CPYZeroPage => {
+                        let val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let y = self.y;
+                        let _ = self.subtract(y, val);
 
                         self.offset_pc(2);
                     }
@@ -834,11 +1348,52 @@ impl NESCpu {
 
                         self.offset_pc(2);
                     }
+                    
+                    Op::SBCZeroPage => {
+                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let a = self.a;
+                        val = self.subtract_with_carry(a, val);
+
+                        self.a = val;
+
+                        self.offset_pc(2);
+                    }
+
+                    Op::INCZeroPage => {
+                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        val = self.add(val, 1);
+
+                        interconnect.write_zero_page(opcode.imm1() as usize, val);
+
+                        self.offset_pc(2);
+                    }
+
+                    Op::INXImplied => {
+                        self.offset_x(1);
+
+                        self.offset_pc(1);
+                    }
+
+                    Op::SBCImmediate => {
+                        let a = self.a;
+                        self.a = self.subtract_with_carry(a, opcode.imm1());
+
+                        self.offset_pc(2);
+                    }
 
                     Op::CPXAbsolute => {
                         let x = self.x;
                         let val = interconnect.read_absolute(opcode.abs_addr() as usize);
                         let _ = self.subtract(x, val);
+
+                        self.offset_pc(3);
+                    }
+
+                    Op::INCAbsolute => {
+                        let mut val = interconnect.read_absolute(opcode.abs_addr() as usize);
+                        val = self.add(val, 1);
+
+                        interconnect.write_absolute(opcode.abs_addr() as usize, val);
 
                         self.offset_pc(3);
                     }
@@ -853,7 +1408,22 @@ impl NESCpu {
                         self.offset_pc(2);
                     }
 
+                    Op::SBCAbsoluteY => {
+                        let mut val = interconnect.read_absolute_indexed_y(opcode.abs_addr(), self.y as usize);
+                        let a = self.a;
+                        val = self.subtract_with_carry(a, val);
+
+                        self.a = val;
+
+                        self.offset_pc(3);
+                    }
+
+                    Op::NOPImplied => {
+                        self.offset_pc(1);
+                    }
+
                     _ => {
+                        println!("{:?}", opcode);
                         println!("unimplemented opcode");
                         return false
                     }

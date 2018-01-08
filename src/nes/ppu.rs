@@ -1,8 +1,10 @@
 use minifb::{WindowOptions, Window, Key, Scale};
-use super::interconnect::Interconnect;
 
-pub const WIDTH: usize = 256;// 341;
-pub const HEIGHT: usize = 240;
+use super::interconnect::Interconnect;
+use super::cart::*;
+
+pub const WIDTH: usize = 256 + 256;// 341;
+pub const HEIGHT: usize = 240;// + 240;
 
 pub struct NESPpu {
     ctrl: u8,
@@ -11,11 +13,25 @@ pub struct NESPpu {
     oam_addr: u8,
     oam_data: u8,
     scroll: u8,
-    addr: u8,
+    addr: u16,
     data: u8,
     oam_dma: u8,
-
     oam: [u8; 0xFF],
+
+    scroll_write: bool,
+    addr_write: bool,
+
+    nametable1: [u8; 0x400],
+    nametable2: [u8; 0x400],
+
+    bg_palette0: [u8;3],
+    bg_palette1: [u8;3],
+    bg_palette2: [u8;3],
+    bg_palette3: [u8;3],
+
+    palette: [u32;0x40],
+
+    buttons: u8,
 
     vram: Vec<u32>,
 
@@ -31,7 +47,7 @@ impl NESPpu {
             ctrl: 0,
             mask: 0,
             //status: 0b1010_0000,
-            status: 0b0010_0000,
+            status: 0b1010_0000,
             oam_addr: 0,
             oam_data: 0,
             scroll: 0,
@@ -39,8 +55,26 @@ impl NESPpu {
             data: 0,
             //odd_frame: false,
             oam_dma: 0,
-
             oam: [0; 0xFF],
+
+            scroll_write: false,
+            addr_write: false,
+
+            nametable1: [0; 0x400],
+            nametable2: [0; 0x400],
+
+            bg_palette0: [0u8;3],
+            bg_palette1: [0u8;3],
+            bg_palette2: [0u8;3],
+            bg_palette3: [0u8;3],
+
+            palette: [0x6D6D6D,0x002491,0x0000DA,0x6D48DA,0x91006D,0xB6006D,0xB62400,0x914800,0x6D4800,0x244800,0x006D24,0x009100,0x004848,0x000000,0x000000,0x000000,
+                      0xB6B6B6,0x006DDA,0x0048FF,0x9100FF,0xB600FF,0xFF0091,0xFF0000,0xDA6D00,0x916D00,0x249100,0x009100,0x00B66D,0x009191,0x000000,0x000000,0x000000,
+                      0xFFFFFF,0x6DB6FF,0x9191FF,0xDA6DFF,0xFF00FF,0xFF6DFF,0xFF9100,0xFFB600,0xDADA00,0x6DDA00,0x00FF00,0x48FFDA,0x00FFFF,0x000000,0x000000,0x000000,
+                      0xFFFFFF,0xB6DAFF,0xDAB6FF,0xFFB6FF,0xFF91FF,0xFFB6B6,0xFFDA91,0xFFFF48,0xFFFF6D,0xB6FF48,0x91FF6D,0x48FFDA,0x91DAFF,0x000000,0x000000,0x000000],
+
+
+            buttons: 0u8,
 
             vram: vec![0u32; WIDTH*HEIGHT],
 
@@ -60,6 +94,20 @@ impl NESPpu {
     //https://wiki.nesdev.com/w/index.php/PPU_registers
     pub fn read_ppu(&mut self, addr: usize) -> u8 {
         match addr {
+            0x4016 => {
+                self.buttons += 1;
+                if self.buttons == 7 {
+                    self.buttons = 0;
+                }
+
+                if self.buttons == 3 {
+                    return 1;
+                }
+
+                0
+            }
+
+
             //Write-Only
             0 => {
                 //I'm currently unclear as to which value
@@ -81,10 +129,13 @@ impl NESPpu {
                 //actually contain the status register
                 
                 if self.cycles == -1 {
+                    let status = self.status&0xE0; //| self.scroll&0x1F;
                     self.status &= 0x7F;
+
+                    return status;
                 }
                 
-                self.status&0xE0 | self.scroll&0x1F
+                self.status&0xE0 //| self.scroll&0x1F
             }
             
             //Write-Only
@@ -94,7 +145,7 @@ impl NESPpu {
             
             //Read-Write
             4 => {
-                self.oam_data
+                self.oam[self.oam_addr as usize]
             }
             
             //Write-Only
@@ -160,17 +211,82 @@ impl NESPpu {
             
             //Write-Only
             5 => {
-                
+                if !self.scroll_write {
+                    self.scroll = (val&0xF0) << 4;
+                } else {
+                    self.scroll = val&0xF;
+                }
+
+                self.scroll_write = !self.scroll_write;
             }
             
             //Write-Only
             6 => {
-                
+                if !self.addr_write {
+                    self.addr = (val as u16) << 8;
+                } else {
+                    self.addr |= val as u16;
+                    //panic!("addr: 0x{:04X}", self.addr);
+                }
+
+                self.addr_write = !self.addr_write;
             }
             
             //Read-Write
             7 => {
-                
+                match self.addr {
+                    0x0000...0x1FFF => {
+
+                    }
+
+                    0x2000...0x23FF => {
+                        self.nametable1[(self.addr - 0x2000) as usize] = val;
+                    }
+
+                    0x2400...0x27FF => {
+                        self.nametable2[(self.addr - 0x2400) as usize] = val;
+                    }
+
+                    0x2800...0x2BFF => {
+                        self.nametable1[(self.addr - 0x2800) as usize] = val;
+                    }
+
+                    0x2C00...0x2FFF => {
+                        self.nametable2[(self.addr - 0x2C00) as usize] = val;
+                    }
+
+                    0x3F00 => {
+
+                    }
+
+                    0x3F01...0x3F03 => {
+                        self.bg_palette0[(self.addr - 0x3F01) as usize] = val;
+                    }
+                    0x3F05...0x3F07 => {
+                        self.bg_palette1[(self.addr - 0x3F05) as usize] = val;
+                    }
+                    0x3F09...0x3F0B => {
+                        self.bg_palette2[(self.addr - 0x3F09) as usize] = val;
+                    }
+                    0x3F0D...0x3F0F => {
+                        self.bg_palette3[(self.addr - 0x3F0D) as usize] = val;
+                    }
+
+                    _ => {
+
+                    }
+                }
+
+                //TODO: this should be changed depending on the ctrl register
+                if self.ctrl&0x4 > 0 {
+                    if self.addr/32 >= 511 {
+                        self.addr = self.addr - (32*511)+1;
+                    } else {
+                        self.addr = self.addr.wrapping_add(32);
+                    }
+                } else {
+                    self.addr = self.addr.wrapping_add(1);
+                }
             }
 
             //If the interconnect is programmed properly
@@ -181,49 +297,127 @@ impl NESPpu {
         }
     }
 
-    pub fn do_cycle(&mut self, pt0: &[u8], pt1: &[u8], nt0: &[u8], nt1: &[u8], window: &mut Window) {
-        for y in 0..HEIGHT {
-            for x in 0..WIDTH {
-                //self.vram[x + (y*WIDTH)] = (((x ^ y) & 0xff) * 1) as u32;
+    pub fn do_cycle(&mut self, pt0: &[u8], pt1: &[u8], nt0: &[u8], nt1: &[u8], ram: &[u8;0x10000], delta_ram: &mut [bool;0x10000], _cart: &NESCart, window: &mut Window) {
 
-                let nt = if self.ctrl&0x3 == 0 || self.ctrl&0x3 == 1 {
-                    nt0
-                } else {
-                    nt1
-                };
-                let pt = if self.ctrl&0x8 == 1 {
-                    pt0
-                } else {
-                    pt1
-                };
+        if self.cycles != 240 {
+            for y in 0..HEIGHT {
+                let mut x = 0;
+                loop {
+                    if x >= WIDTH/2 {
+                        break;
+                    }
 
-                let pattern_addr = nt[x/32 + ((y/30)*32)] as usize;
-                
-                let sliver1 = pt[pattern_addr*16 + (y%8)];
-                let sliver2 = pt[pattern_addr*16 + (y%8) + 8];
+                    //self.vram[x + (y*WIDTH)] = (((x ^ y) & 0xff) * 1) as u32;
 
-                let color1 = (sliver1 >> (7-(x%8))) & 0x1;
-                let color2 = (sliver2 >> (7-(x%8))) & 0x1;
+                    let nt_x = x+((self.scroll as usize >> 4)%8);
+                    let nt_y = y+((self.scroll as usize & 0xF)%8);
 
-                if color1 > 0 && color2 > 0 {
-                    self.vram[x + (y*WIDTH)] = 0xFF0000;
+                    if self.mask&0x8 >= 0 {
+                        let nt = if self.ctrl&0x3 == 0 || self.ctrl&0x3 == 1 {
+                            //nt0
+                            &self.nametable1
+                        } else {
+                            //nt1
+                            &self.nametable2
+                        };
+                        let pt = if self.ctrl&0x10 == 0 {
+                            pt0
+                        } else {
+                            pt1
+                        };
+
+
+                        let attrib = nt[(x/32) + (y/32)*8 + 0x3C0];
+                        let palette = match (x/16,y/16) {
+                            (0,0) => {
+                                attrib&0x3
+                            }
+                            (1,0) => {
+                                (attrib&0xC) >> 2
+                            }
+                            (0,1) => {
+                                (attrib&0x30) >> 4
+                            }
+                            (1,1) => {
+                                (attrib&0xC0) >> 6
+                            }
+
+                            _ => {
+                                attrib&0x3
+                            }
+                        };
+                        //let topright_palette = (attrib&0xC) >> 2;
+                        //let bottomleft_palette = (attrib&0x30) >> 4;
+                        //let bottomright_palette = (attrib&0xC0) >> 6;
+
+                        let bg_pal = match palette {
+                            0 => {
+                                self.bg_palette0
+                            }
+                            1 => {
+                                self.bg_palette1
+                            }
+                            2 => {
+                                self.bg_palette2
+                            }
+                            3 => {
+                                self.bg_palette3
+                            }
+                            _ => {
+                                self.bg_palette0
+                            }
+                        };
+
+                        let pattern_addr = nt[nt_x/8 + ((nt_y/8)*32)] as usize;
+                        
+                        let sliver1 = pt[pattern_addr*16 + (nt_y%8)];
+                        let sliver2 = pt[pattern_addr*16 + (nt_y%8) + 8];
+
+                        for i in 0..8 {
+                            let color1 = (sliver1 >> (7-i)) & 0x1;
+                            let color2 = (sliver2 >> (7-i)) & 0x1;
+
+                            if color1 > 0 && color2 > 0 {
+                                self.vram[x+i + (y*WIDTH)] = self.palette[bg_pal[2] as usize];
+                            }
+                            else if color1 > 0 {
+                                self.vram[x+i + (y*WIDTH)] = self.palette[bg_pal[0] as usize];
+                            }
+                            else if color2 > 0 {
+                                self.vram[x+i + (y*WIDTH)] = self.palette[bg_pal[1] as usize];
+                            }
+                            else {
+                                self.vram[x+i + (y*WIDTH)] = 0;
+                            }
+                        }
+                    }
+
+                    x += 8;
                 }
-                else if color1 > 0 {
-                    self.vram[x + (y*WIDTH)] = 0x00FF00;
-                }
-                else if color2 > 0 {
-                    self.vram[x + (y*WIDTH)] = 0x0000FF;
-                }
-                else {
-                    self.vram[x + (y*WIDTH)] = 0;
-                }
-
-                //self.vram[x + (y*WIDTH)] = ((colorr as u32) << 16) 
-                //    | ((colorg as u32) << 16)
-                //    | (colorb as u32);
             }
         }
-        
+
+        if self.cycles%16 == 0 {
+            for y in 0..HEIGHT/4 {
+                for x in 0..WIDTH/2 {
+                    let val = (ram[(x) + (y*WIDTH/2)] as u32) << 8;
+                    if delta_ram[x + (y*WIDTH/2)] || (self.vram[x+256 + (y*WIDTH)]&0xFF00 != val) {
+                        self.vram[x+256 + (y*WIDTH)] |= 0xFF;
+                        delta_ram[x + (y*WIDTH/2)] = false;
+                    }
+
+                    self.vram[x+256 + (y*WIDTH)] &= 0x00FF;
+                    self.vram[x+256 + (y*WIDTH)] |= val;
+
+                    if self.vram[x+256 + (y*WIDTH)]&0xFF >= 9 {
+                        self.vram[x+256 + (y*WIDTH)] -= 9;
+                    }
+                }
+            }
+        }
+
+          
+
         self.cycles += 1;
 
         match self.cycles {
@@ -231,12 +425,12 @@ impl NESPpu {
                 self.status &= 0x7F;
             }
 
-            241 => {
+            241...339 => {
                 self.status |= 0x80;
             }
 
             340 => {
-                self.cycles = -1;
+                self.cycles = -2;
             }
 
             _ => {
@@ -244,6 +438,10 @@ impl NESPpu {
             }
         }
 
-        window.update_with_buffer(&self.vram);
+        if self.cycles == 241 {
+            window.update_with_buffer(&self.vram);
+        } else {
+            window.update();
+        }
     }
 }

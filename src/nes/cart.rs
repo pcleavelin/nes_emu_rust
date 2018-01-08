@@ -35,7 +35,7 @@ impl NESCart {
     }
 
     pub fn get_pattern_table(&self, num: usize) -> &[u8] {
-        let addr = self.data[4] as usize * 16000 + 0x10 + (0x1000*num);
+        let addr = self.data[4] as usize * 0x4000 + 0x10 + (0x1000*num);
         return &self.data.as_slice()[addr..(addr+0x1000)];
     }
 

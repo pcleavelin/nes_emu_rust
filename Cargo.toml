@@ -3,6 +3,9 @@ name = "nes_emu_rust"
 version = "0.1.0"
 authors = ["Patrick Cleavelin"]
 
+[profile.dev]
+opt-level = 3
+
 [dependencies]
 enum_primitive = "0.1.1"
 minifb = "0.9.1"

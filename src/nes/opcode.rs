@@ -69,6 +69,7 @@ enum_from_primitive! {
         SEIImplied     = 0x78,
         ADCAbsoluteY   = 0x79,
         ADCAbsoluteX   = 0x7D,
+        RORAbsoluteX   = 0x7E,
         STAIndirectX   = 0x81,
         STYZeroPage    = 0x84,
         STAZeroPage    = 0x85,
@@ -110,6 +111,7 @@ enum_from_primitive! {
         LDAAbsoluteX   = 0xBD,
         LDXAbsoluteY   = 0xBE,
         CPYImmediate   = 0xC0,
+        CMPIndirectX   = 0xC1,
         CPYZeroPage    = 0xC4,
         CMPZeroPage    = 0xC5,
         DECZeroPage    = 0xC6,
@@ -144,6 +146,7 @@ enum_from_primitive! {
         SBCAbsoluteY   = 0xF9,
         SBCAbsoluteX   = 0xFD,
         INCAbsoluteX   = 0xFE,
+        NOPImplied     = 0xEA,
     }
 }
 
