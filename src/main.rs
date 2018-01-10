@@ -1,10 +1,12 @@
 #[macro_use] extern crate enum_primitive;
 extern crate minifb;
+extern crate libusb;
 
 use std::env;
 
 mod nes;
 use nes::NES;
+use nes::controller_scanner::*;
 
 fn main() {
     let mut nes = NES::new();
@@ -19,4 +21,5 @@ fn main() {
 
     nes.hard_restart();
     nes.run();
+
 }

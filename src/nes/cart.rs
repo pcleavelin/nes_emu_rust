@@ -40,10 +40,15 @@ impl NESCart {
     }
 
     pub fn read(&self, addr: usize) -> u8 {
+        if self.data[4] == 1 && addr > 0x4000{
+            return self.data[addr-0x4000];
+        }
+
         if addr >= self.data.len() {
             println!("error reading from cart: reached end of rom!");
             return 0;
         }
+        
         self.data[addr]
     }
 

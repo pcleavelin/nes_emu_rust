@@ -1,4 +1,5 @@
 use minifb::{WindowOptions, Window, Key, Scale};
+use libusb;
 
 use super::ppu::*;
 use super::apu::*;
@@ -23,6 +24,7 @@ pub struct Interconnect {
 
 impl Interconnect {
     pub fn new() -> Interconnect {
+
         Interconnect {
             internal_ram: [0x0u8;0x0800],
             delta_ram: [true;0x10000],
@@ -75,9 +77,9 @@ impl Interconnect {
 
     pub fn update(&mut self, window: &mut Window) {
         let mut ram = [0u8;0x10000];
-        for i in 0..0x10000 {
+        /*for i in 0..0x10000 {
             ram[i] = self.read_mem(i);
-        }
+        }*/
 
         let mut pt0 = self.cart.get_pattern_table(0);
         let mut pt1 = self.cart.get_pattern_table(1);
@@ -106,11 +108,12 @@ impl Interconnect {
                 self.ppu.read_ppu((fixed_addr - 0x2000) % 8)
             }
 
-            0x4000...0x4017 => {
-                if fixed_addr == 0x4016 {
-                    return self.ppu.read_ppu(fixed_addr);
-                }
+            0x4000...0x4015 => {
                 0 //TODO: return apu and i/o registers
+            }
+
+            0x4016...0x4017 => {
+                self.io.read(fixed_addr)
             }
 
             0x4018...0x401F => {
@@ -172,7 +175,7 @@ impl Interconnect {
 
     pub fn read_indexed_indirect_y(&mut self, addr: usize, y: usize) -> u8 {
         let pointer: usize = self.read_mem((addr) % 256) as usize + ((self.read_mem((addr + 1) % 256) as usize) << 8);
-        self.read_mem(pointer.wrapping_add(y))
+        self.read_mem((pointer as u16).wrapping_add(y as u16) as usize)
     }
 
     //Writing Memory
@@ -199,9 +202,13 @@ impl Interconnect {
                 self.delta_ram[fixed_addr] = true;
             }
 
+            0x4016 => {
+                self.io.write(fixed_addr, val);
+            }
+
             0x4000...0x4017 => {
                 //TODO: write to apu and i/o registers
-                println!("Unimplemented Write to I/O registers!");
+                println!("Unimplemented Write to I/O registers! 0x{:04X}", fixed_addr);
 
                 self.delta_ram[fixed_addr] = true;
             }
@@ -262,12 +269,16 @@ impl Interconnect {
 
     pub fn write_indexed_indirect_y(&mut self, addr: usize, y: usize, val: u8) {
         let pointer: usize = self.read_mem((addr) % 256) as usize + ((self.read_mem((addr + 1) % 256) as usize) << 8);
-        self.write_mem(pointer.wrapping_add(y), val);
+        self.write_mem((pointer as u16).wrapping_add(y as u16) as usize, val);
 
         //println!("STORING 0x{:02X} at 0x{:04X}", val, pointer.wrapping_add(y));
     }
 
     pub fn ppu(&mut self) -> &mut NESPpu {
         &mut self.ppu
+    }
+
+    pub fn io(&mut self) -> &mut NESIo {
+        &mut self.io
     }
 }

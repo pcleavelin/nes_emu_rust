@@ -8,4 +8,5 @@ opt-level = 3
 
 [dependencies]
 enum_primitive = "0.1.1"
-minifb = "0.9.1"
+minifb = "0.10.4"
+libusb = "0.3"

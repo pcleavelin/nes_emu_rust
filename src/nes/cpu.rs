@@ -238,7 +238,7 @@ impl NESCpu {
             self.p.set_zero(false);
         }
 
-        if (self.a & 0x80) > 1 {
+        if (self.a & 0x80) > 0 {
             self.p.set_negative(true);
         } else {
             self.p.set_negative(false);
@@ -253,7 +253,7 @@ impl NESCpu {
             self.p.set_zero(false);
         }
 
-        if (self.x & 0x80) > 1 {
+        if (self.x & 0x80) > 0 {
             self.p.set_negative(true);
         } else {
             self.p.set_negative(false);
@@ -268,7 +268,7 @@ impl NESCpu {
             self.p.set_zero(false);
         }
 
-        if (self.y & 0x80) > 1 {
+        if (self.y & 0x80) > 0 {
             self.p.set_negative(true);
         } else {
             self.p.set_negative(false);
@@ -331,31 +331,27 @@ impl NESCpu {
         }
     }
     pub fn offset_s(&mut self, val: u8) {
-        self.s = (self.s.wrapping_add(val) as u16 % 0x100) as u8;
+        self.s = self.s.wrapping_add(val);
     }
     pub fn offset_pc(&mut self, val: u16) {
         self.pc = self.pc.wrapping_add(val);
     }
 
     pub fn add_with_carry(&mut self, lhs: u8, rhs: u8) -> u8 {
-        if self.p.decimal {
-            //return self.add_carry_decimal(left, right);
-        }
-
         let carry = self.p.carry;
-        let mut result = (lhs as u16) + (rhs as u16);
+        let mut result = (lhs as u16).wrapping_add(rhs as u16);
 
         if carry {
-            result = result + 1;
+            result = result.wrapping_add(1);
         }
         
-        if ((result as u8)&0x80) == 0x80 {
+        if ((result as u8)&0x80) > 0 {
             self.p.set_negative(true);
         }
         else {
             self.p.set_negative(false);
         }
-        if (result as u8) == 0 {
+        if result&0xFF == 0 {
             self.p.set_zero(true);
         }
         else {
@@ -374,17 +370,24 @@ impl NESCpu {
             self.p.set_carry(false);
         }
         
-        result as u8
+        (result&0xFF) as u8
     }
 
     fn add(&mut self, lhs: u8, rhs: u8) -> u8 {
-        let mut val = lhs.wrapping_sub(rhs);
+        let val = self.add_no_carry(lhs, rhs);
         
         if val < lhs {
             self.p.set_carry(true);
         } else {
             self.p.set_carry(false);
         }
+
+        val
+    }
+
+    fn add_no_carry(&mut self, lhs: u8, rhs: u8) -> u8 {
+        let val = lhs.wrapping_sub(rhs);
+        
         if val == 0 {
             self.p.set_zero(true);
         } else {
@@ -411,7 +414,7 @@ impl NESCpu {
         } else {
             self.p.set_carry(false);
         }
-        if val == 0 {
+        if val&0xFF == 0 {
             self.p.set_zero(true);
         } else {
             self.p.set_zero(false);
@@ -421,18 +424,30 @@ impl NESCpu {
         } else {
             self.p.set_negative(false);
         }
+        if (val as i16) < -128 || (val as i16) > 127 {
+            self.p.set_overflow(true);
+        } else {
+            self.p.set_overflow(false);
+        }
 
         (val&0xFF) as u8
     }
 
     pub fn subtract(&mut self, lhs: u8, rhs: u8) -> u8 {
-        let val = lhs.wrapping_sub(rhs);
+        let val = self.subtract_no_carry(lhs, rhs);
         
         if lhs >= rhs {
             self.p.set_carry(true);
         } else {
             self.p.set_carry(false);
         }
+
+        val
+    }
+
+    pub fn subtract_no_carry(&mut self, lhs: u8, rhs: u8) -> u8 {
+        let val = lhs.wrapping_sub(rhs);
+        
         if val == 0 {
             self.p.set_zero(true);
         } else {
@@ -545,8 +560,8 @@ impl NESCpu {
 
                     //IMPLIED
                     Op::BRKImmediate => {
-                        if self.p.irq_disable == false {
-                            let return_point = self.pc.wrapping_add(1);
+                        //if self.p.irq_disable == false {
+                            let return_point = self.pc.wrapping_add(2);
 
                             let p = self.p.to_u8();
                             self.push_stack(interconnect, ((return_point&0xFF00) >> 8) as u8);
@@ -557,11 +572,11 @@ impl NESCpu {
                             let addr_hi = interconnect.read_absolute(0xFFFF) as u16;
 
                             self.pc = (addr_hi << 8) | addr_lo;
-                        } else {
-                            self.offset_pc(1);
-                        }
+                        //} else {
+                            //self.offset_pc(1);
+                        //}
 
-                        return false;
+                        //return false;
                     }
 
                     Op::ORAIndirectX => {
@@ -604,6 +619,13 @@ impl NESCpu {
                         self.offset_pc(2);
                     }
 
+                    Op::PHPImplied => {
+                        let p = self.p.to_u8();
+                        self.push_stack(interconnect, p);
+
+                        self.offset_pc(1);
+                    }
+
                     Op::ASLAccumulator => {
                         let a = self.a;
 
@@ -615,9 +637,9 @@ impl NESCpu {
                     //Branch if Plus (adds to the program counter if negative flag is clear)
                     Op::BPLRelative => {
                         if self.p.negative == false {
-                            print!("Branching from 0x{:04X}", self.pc);
+                            //print!("Branching from 0x{:04X}", self.pc);
                             self.offset_pc(opcode.imm1().cast_with_neg());
-                            println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
+                            //println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
                         }
 
                         self.offset_pc(2);
@@ -698,6 +720,14 @@ impl NESCpu {
                         self.offset_pc(2);
                     }
 
+                    Op::PLPImplied => {
+                        let val = self.pop_stack(interconnect);
+
+                        self.p = CPUStatus::from(val);
+
+                        self.offset_pc(1);
+                    }
+
                     //AND Accumulator with immediate
                     Op::ANDImmediate => {
                         let a = self.a;
@@ -738,10 +768,21 @@ impl NESCpu {
 
                     Op::BMIRelative => {
                         if self.p.negative == true {
-                            print!("Branching from 0x{:04X}", self.pc);
+                            //print!("Branching from 0x{:04X}", self.pc);
                             self.offset_pc(opcode.imm1().cast_with_neg());
-                            println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
+                            //println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
                         }
+
+                        self.offset_pc(2);
+                    }
+
+                    Op::ANDIndirectY => {
+                        let mut val = interconnect.read_indexed_indirect_y(opcode.imm1() as usize, self.y as usize);
+                        let a = self.a;
+
+                        let val = self.and(a, val);
+
+                        self.a = val;
 
                         self.offset_pc(2);
                     }
@@ -768,6 +809,17 @@ impl NESCpu {
                         self.offset_pc(3);
                     }
 
+                    Op::ANDZeroPageX => {
+                        let mut val = interconnect.read_zero_paged_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let a = self.a;
+
+                        let val = self.and(a, val);
+
+                        self.a = val;
+
+                        self.offset_pc(2);
+                    }
+
                     Op::SECImplied => {
                         self.p.set_carry(true);
 
@@ -778,12 +830,10 @@ impl NESCpu {
                         let p = self.pop_stack(interconnect) as u8;
                         let lo = self.pop_stack(interconnect) as u16;
                         let hi = self.pop_stack(interconnect) as u16;
-                        let ret = ((hi << 8) | lo).wrapping_sub(1);
+                        let ret = (hi << 8) | lo;
 
                         self.p = CPUStatus::from(p);
                         self.pc = ret;
-
-                        self.offset_pc(1);
                     }
 
                     Op::LSRZeroPage => {
@@ -812,6 +862,13 @@ impl NESCpu {
                         self.offset_pc(1);
                     }
 
+                    Op::EORImmediate => {
+                        let a = self.a;
+                        self.a = self.eor(a, opcode.imm1());
+
+                        self.offset_pc(2);
+                    }
+
                     Op::LSRAccumulator => {
                         let a = self.a;
                         self.a = self.shift_right(a);
@@ -834,9 +891,9 @@ impl NESCpu {
 
                     Op::BVCRelative => {
                         if self.p.overflow == false {
-                            print!("Branching from 0x{:04X}", self.pc);
+                            //print!("Branching from 0x{:04X}", self.pc);
                             self.offset_pc(opcode.imm1().cast_with_neg());
-                            println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
+                            //println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
                         }
 
                         self.offset_pc(2);
@@ -853,7 +910,7 @@ impl NESCpu {
 
                         self.offset_pc(1);
 
-                        //println!("S: {:04X}", self.s);
+                        ////println!("S: {:04X}", self.s);
                         println!("Returning to 0x{:04X} - sp: 0x{:04X}", self.pc, self.s);
                     }
 
@@ -1009,9 +1066,9 @@ impl NESCpu {
 
                     Op::BCCRelative => {
                         if self.p.carry == false {
-                            print!("Branching from 0x{:04X}", self.pc);
+                            //print!("Branching from 0x{:04X}", self.pc);
                             self.offset_pc(opcode.imm1().cast_with_neg());
-                            println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
+                            //println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
                         }
 
                         self.offset_pc(2);
@@ -1047,7 +1104,7 @@ impl NESCpu {
                     Op::TXSImplied => {
                         self.s = self.x;
 
-                        //println!("TXS sp: 0x{:04X}", self.s);
+                        ////println!("TXS sp: 0x{:04X}", self.s);
 
                         self.offset_pc(1);
                     }
@@ -1148,9 +1205,9 @@ impl NESCpu {
                     //Branch if carry set (adds to the program counter if carry flag is set)
                     Op::BCSRelative => {
                         if self.p.carry == true {
-                            print!("Branching from 0x{:04X}", self.pc);
+                            //print!("Branching from 0x{:04X}", self.pc);
                             self.offset_pc(opcode.imm1().cast_with_neg());
-                            println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
+                            //println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
                         }
 
                         self.offset_pc(2);
@@ -1186,6 +1243,22 @@ impl NESCpu {
                         let val = interconnect.read_absolute_indexed_y(opcode.abs_addr(), self.y as usize);
 
                         self.set_a(val);
+
+                        self.offset_pc(3);
+                    }
+
+                    Op::TSXImplied => {
+                        let s = self.s;
+
+                        self.set_x(s);
+
+                        self.offset_pc(1);
+                    }
+
+                    Op::LDYAbsoluteX => {
+                        let val = interconnect.read_absolute_indexed_x(opcode.abs_addr(), self.x as usize);
+                        
+                        self.set_y(val);
 
                         self.offset_pc(3);
                     }
@@ -1235,7 +1308,7 @@ impl NESCpu {
 
                     Op::DECZeroPage => {
                         let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
-                        val = self.subtract(val, 1);
+                        val = self.subtract_no_carry(val, 1);
 
                         interconnect.write_zero_page(opcode.imm1() as usize, val);
 
@@ -1275,7 +1348,7 @@ impl NESCpu {
                     
                     Op::DECAbsolute => {
                         let mut val = interconnect.read_absolute(opcode.abs_addr() as usize);
-                        val = self.subtract(val, 1);
+                        val = self.subtract_no_carry(val, 1);
 
                         interconnect.write_absolute(opcode.abs_addr() as usize, val);
 
@@ -1285,9 +1358,9 @@ impl NESCpu {
                     //Branch if not equal (adds to the program counter if zero flag is not set)
                     Op::BNERelative => {
                         if self.p.zero == false {
-                            print!("Branching from 0x{:04X}", self.pc);
+                            //print!("Branching from 0x{:04X}", self.pc);
                             self.offset_pc(opcode.imm1().cast_with_neg());
-                            println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
+                            //println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
                         }
 
                         self.offset_pc(2);
@@ -1295,7 +1368,7 @@ impl NESCpu {
 
                     Op::DECZeroPageX => {
                         let mut val = interconnect.read_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize);
-                        val = self.subtract(val, 1);
+                        val = self.subtract_no_carry(val, 1);
 
                         interconnect.write_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize, val);
 
@@ -1319,7 +1392,7 @@ impl NESCpu {
 
                     Op::DECAbsoluteX => {
                         let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr() as usize, self.x as usize);
-                        val = self.subtract(val, 1);
+                        val = self.subtract_no_carry(val, 1);
 
                         interconnect.write_absolute_indexed_x(opcode.abs_addr() as usize, self.x as usize, val);
 
@@ -1361,7 +1434,7 @@ impl NESCpu {
 
                     Op::INCZeroPage => {
                         let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
-                        val = self.add(val, 1);
+                        val = self.add_no_carry(val, 1);
 
                         interconnect.write_zero_page(opcode.imm1() as usize, val);
 
@@ -1391,7 +1464,7 @@ impl NESCpu {
 
                     Op::INCAbsolute => {
                         let mut val = interconnect.read_absolute(opcode.abs_addr() as usize);
-                        val = self.add(val, 1);
+                        val = self.add_no_carry(val, 1);
 
                         interconnect.write_absolute(opcode.abs_addr() as usize, val);
 
@@ -1400,9 +1473,9 @@ impl NESCpu {
 
                     Op::BEQRelative => {
                         if self.p.zero == true {
-                            print!("Branching from 0x{:04X}", self.pc);
+                            //print!("Branching from 0x{:04X}", self.pc);
                             self.offset_pc(opcode.imm1().cast_with_neg());
-                            println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
+                            //println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
                         }
 
                         self.offset_pc(2);
@@ -1414,6 +1487,15 @@ impl NESCpu {
                         val = self.subtract_with_carry(a, val);
 
                         self.a = val;
+
+                        self.offset_pc(3);
+                    }
+
+                    Op::INCAbsoluteX => {
+                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr() as usize, self.x as usize);
+                        val = self.add_no_carry(val, 1);
+
+                        interconnect.write_absolute_indexed_x(opcode.abs_addr() as usize, self.x as usize, val);
 
                         self.offset_pc(3);
                     }

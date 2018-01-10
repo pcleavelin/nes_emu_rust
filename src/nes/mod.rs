@@ -1,6 +1,7 @@
 mod cpu;
 mod ppu;
 mod apu;
+pub mod controller_scanner;
 mod io;
 mod cart;
 mod interconnect;
@@ -9,6 +10,11 @@ mod integer_casting;
 
 use self::cpu::*;
 use self::interconnect::*;
+use self::controller_scanner::*;
+use self::io::NESIoButton;
+
+use std;
+use libusb;
 use minifb::{WindowOptions, Window, Key, Scale};
 
 pub struct NES {
@@ -72,8 +78,43 @@ impl NES {
     }
 
     pub fn run(&mut self) {
+
+        let mut scanner = ControllerScanner::new();
+        let mut adapter = scanner.find_adapter(0x11c0, 0x5500).unwrap().unwrap();
+        let mut listener = adapter.listen().unwrap();
+
+        /*while let Ok(Some(controller)) = listener.read() {
+            println!("A: {}", controller.a);
+            println!("B: {}", controller.b);
+
+            println!("Select: {}", controller.select);
+            println!("Start: {}", controller.start);
+
+            println!("Up: {}", controller.up);
+            println!("Down: {}", controller.down);
+            println!("Left: {}", controller.left);
+            println!("Right: {}", controller.right);
+        }*/
+
         let mut do_int = true;
         while self.window.is_open() && !self.window.is_key_down(Key::Escape) {
+
+            if self.interconnect.ppu().cycles() == 241 {
+                match listener.read() {
+                    Ok(Some(controller)) => {
+                        self.interconnect.io().set_controller_button(NESIoButton::Start, controller.start);
+                        self.interconnect.io().set_controller_button(NESIoButton::Select, controller.select);
+                        self.interconnect.io().set_controller_button(NESIoButton::A, controller.a);
+                        self.interconnect.io().set_controller_button(NESIoButton::B, controller.b);
+                        self.interconnect.io().set_controller_button(NESIoButton::Up, controller.up);
+                        self.interconnect.io().set_controller_button(NESIoButton::Down, controller.down);
+                        self.interconnect.io().set_controller_button(NESIoButton::Left, controller.left);
+                        self.interconnect.io().set_controller_button(NESIoButton::Right, controller.right);
+                    }
+                    _ => {}
+                }
+            }
+            
             if self.cpu.do_instruction(&mut self.interconnect) == false {
                 //self.hard_restart();
                 //self.cpu.offset_pc(1);
@@ -88,7 +129,7 @@ impl NES {
 
             if do_int {
                 do_int = false;
-                //self.cpu.do_nmi(&mut self.interconnect);
+                self.cpu.do_nmi(&mut self.interconnect);
             }
         }
     }
