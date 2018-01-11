@@ -102,14 +102,25 @@ impl NES {
             if self.interconnect.ppu().cycles() == 241 {
                 match listener.read() {
                     Ok(Some(controller)) => {
-                        self.interconnect.io().set_controller_button(NESIoButton::Start, controller.start);
-                        self.interconnect.io().set_controller_button(NESIoButton::Select, controller.select);
                         self.interconnect.io().set_controller_button(NESIoButton::A, controller.a);
                         self.interconnect.io().set_controller_button(NESIoButton::B, controller.b);
+                        self.interconnect.io().set_controller_button(NESIoButton::Select, controller.select);
+                        self.interconnect.io().set_controller_button(NESIoButton::Start, controller.start);
                         self.interconnect.io().set_controller_button(NESIoButton::Up, controller.up);
                         self.interconnect.io().set_controller_button(NESIoButton::Down, controller.down);
                         self.interconnect.io().set_controller_button(NESIoButton::Left, controller.left);
                         self.interconnect.io().set_controller_button(NESIoButton::Right, controller.right);
+
+                        /*println!("A: {}", controller.a);
+                        println!("B: {}", controller.b);
+
+                        println!("Select: {}", controller.select);
+                        println!("Start: {}", controller.start);
+
+                        println!("Up: {}", controller.up);
+                        println!("Down: {}", controller.down);
+                        println!("Left: {}", controller.left);
+                        println!("Right: {}", controller.right);*/
                     }
                     _ => {}
                 }
@@ -129,7 +140,7 @@ impl NES {
 
             if do_int {
                 do_int = false;
-                self.cpu.do_nmi(&mut self.interconnect);
+                //self.cpu.do_nmi(&mut self.interconnect);
             }
         }
     }

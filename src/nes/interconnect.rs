@@ -184,7 +184,7 @@ impl Interconnect {
     //in order for ROMS with different mappers to work; so for now
     //we are just going to hardcode mapper 000
     pub fn write_mem(&mut self, addr: usize, val: u8) {
-        let fixed_addr = addr % 65536;
+        let fixed_addr = addr % 0x10000;
         match fixed_addr {
             0x0000...0x1FFF => {
                 self.internal_ram[fixed_addr % 0x0800] = val;

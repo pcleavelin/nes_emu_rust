@@ -28,6 +28,7 @@ impl NESIo {
 
    
     pub fn set_controller_button(&mut self, btn: NESIoButton, pressed: bool) {
+        //println!("BTN: {}", btn as usize);
         self.buttons[btn as usize] = pressed;
     }
 
@@ -36,12 +37,19 @@ impl NESIo {
             self.controller_read_count = 0;
         }
 
-        let btn = self.buttons[self.controller_read_count as usize] as u8;
 
-        self.controller_read_count += 1;
+        println!("Up is: {}",self.buttons[4]);
+        println!("Down is: {}",self.buttons[5]);
+        println!("Getting Button {}", self.controller_read_count);
+        let btn = if self.controller_read_count < 8 {
+            self.buttons[self.controller_read_count as usize] as u8
+        } else {
+            0//self.buttons[self.controller_read_count as usize] as u8
+        };
+
+        self.controller_read_count = self.controller_read_count.wrapping_add(1);
         self.controller_read_count %= 8;
 
-        println!("Getting Button 0b{:7b}", btn);
         return btn;
     }
 

@@ -24,6 +24,8 @@ pub struct NESPpu {
 
     nametable1: [u8; 0x400],
     nametable2: [u8; 0x400],
+    patterntable1: [u8; 0x1000],
+    patterntable2: [u8; 0x1000],
 
     bg_palette0: [u8;3],
     bg_palette1: [u8;3],
@@ -62,6 +64,8 @@ impl NESPpu {
 
             nametable1: [0; 0x400],
             nametable2: [0; 0x400],
+            patterntable1: [0; 0x1000],
+            patterntable2: [0; 0x1000],
 
             bg_palette0: [0u8;3],
             bg_palette1: [0u8;3],
@@ -111,7 +115,7 @@ impl NESPpu {
                 //This one is interesting, since only the top 3 bits
                 //actually contain the status register
                 
-                if self.cycles == -1 {
+                if self.cycles == 0 {
                     let status = self.status&0xE0 | self.scroll_x&0x1F;
                     self.status &= 0x7F;
 
@@ -163,11 +167,6 @@ impl NESPpu {
         match addr {
             //Write-Only
             0 => {
-                //I'm currently unclear as to which value
-                //should be returned here, since both $2005 and $2006
-                //are labeled as the latch. So for now we'll just
-                //return $2005 (ppu scroll)
-
                 self.ctrl = val;
             }
             
@@ -207,6 +206,8 @@ impl NESPpu {
             6 => {
                 if !self.addr_write {
                     self.addr = (val as u16) << 8;
+
+                    self.addr %= 0x4000;
                 } else {
                     self.addr |= val as u16;
                     //panic!("addr: 0x{:04X}", self.addr);
@@ -218,8 +219,11 @@ impl NESPpu {
             //Read-Write
             7 => {
                 match self.addr {
-                    0x0000...0x1FFF => {
-
+                    0x0000...0x0FFF => {
+                        self.patterntable1[self.addr as usize] = val;
+                    }
+                    0x1000...0x1FFF => {
+                        self.patterntable2[(self.addr - 0x1000) as usize] = val;
                     }
 
                     0x2000...0x23FF => {
@@ -282,6 +286,21 @@ impl NESPpu {
     pub fn do_cycle(&mut self, pt0: &[u8], pt1: &[u8], nt0: &[u8], nt1: &[u8], ram: &[u8;0x10000], delta_ram: &mut [bool;0x10000], _cart: &NESCart, window: &mut Window) {
 
         if self.mask&0x8 >= 0 {
+            let nt = if self.ctrl&0x3 == 0 || self.ctrl&0x3 == 2 {
+                //nt0
+                &self.nametable1
+            } else {
+                //nt1
+                &self.nametable2
+            };
+            let pt = if self.ctrl&0x10 == 0 {
+                pt0
+                //&self.patterntable1
+            } else {
+                pt1
+                //&self.patterntable2
+            };
+
             for y in 0..HEIGHT {
                 let mut x = 0;
                 loop {
@@ -291,22 +310,8 @@ impl NESPpu {
 
                     //self.vram[x + (y*WIDTH)] = (((x ^ y) & 0xff) * 1) as u32;
 
-                    let nt_x = ((x as u8).wrapping_sub(self.scroll_x) as usize)%(WIDTH/2);
-                    let nt_y = ((y as u8).wrapping_sub(self.scroll_y) as usize)%(HEIGHT);
-
-                    let nt = if self.ctrl&0x3 == 0 || self.ctrl&0x3 == 2 {
-                        //nt0
-                        &self.nametable1
-                    } else {
-                        //nt1
-                        &self.nametable2
-                    };
-                    let pt = if self.ctrl&0x10 == 0 {
-                        pt0
-                    } else {
-                        pt1
-                    };
-
+                    let nt_x = ((x).wrapping_add(self.scroll_x as usize *8) as usize)%(WIDTH/2);
+                    let nt_y = ((y).wrapping_add(self.scroll_y as usize *8) as usize)%(HEIGHT);
 
                     let attrib = nt[(nt_x/32) + (nt_y/32)*8 + 0x3C0];
                     let palette = match (nt_x/16,nt_y/16) {
@@ -374,6 +379,67 @@ impl NESPpu {
 
                     x += 8;
                 }
+            }
+
+            for i in 0..32 {
+                let y = self.oam[i*4] as usize;
+                let tile = self.oam[i*4 + 1] as usize;
+                let attrib = self.oam[i*4 + 2];
+                let x = 5;//self.oam[i*4 + 3] as usize;
+
+                /*let attrib = nt[(nt_x/32) + (nt_y/32)*8 + 0x3C0];
+                let palette = match (nt_x/16,nt_y/16) {
+                    (0,0) => {
+                        attrib&0x3
+                    }
+                    (1,0) => {
+                        (attrib&0xC) >> 2
+                    }
+                    (0,1) => {
+                        (attrib&0x30) >> 4
+                    }
+                    (1,1) => {
+                        (attrib&0xC0) >> 6
+                    }
+
+                    _ => {
+                        attrib&0x3
+                    }
+                };*/
+
+                let pattern_addr = tile >> 1;
+
+                for tile_y in 0..8 {
+                    if tile_y+y >= HEIGHT {
+                        break;
+                    }
+
+                    let sliver1 = pt[pattern_addr*16 + (tile_y%8)];
+                    let sliver2 = pt[pattern_addr*16 + (tile_y%8) + 8];
+
+                    for tile_x in 0..8 {
+                        if tile_x+x >= WIDTH/2 {
+                            break;
+                        }
+
+                        let color1 = (sliver1 >> (7-tile_x)) & 0x1;
+                        let color2 = (sliver2 >> (7-tile_x)) & 0x1;
+
+                        if color1 > 0 && color2 > 0 {
+                            self.vram[x+tile_x + ((y+tile_y)*WIDTH)] = 0xFF0000;//self.palette[bg_pal[2] as usize];
+                        }
+                        else if color1 > 0 {
+                            self.vram[x+tile_x + ((y+tile_y)*WIDTH)] = 0x00FF00;//self.palette[bg_pal[0] as usize];
+                        }
+                        else if color2 > 0 {
+                            self.vram[x+tile_x + ((y+tile_y)*WIDTH)] = 0x0000FF;//self.palette[bg_pal[1] as usize];
+                        }
+                        else {
+                            self.vram[x+tile_x + ((y+tile_y)*WIDTH)] = 0;
+                        }
+                    }
+                }
+
             }
         }
 
