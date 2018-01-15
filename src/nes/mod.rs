@@ -4,25 +4,30 @@ mod apu;
 pub mod controller_scanner;
 mod io;
 mod cart;
-mod interconnect;
+mod mmu;
 mod opcode;
 mod integer_casting;
 
 use self::cpu::*;
-use self::interconnect::*;
+use self::ppu::*;
+use self::io::*;
+use self::apu::*;
+use self::mmu::*;
 use self::controller_scanner::*;
 use self::io::NESIoButton;
 
-use std;
-use std::time::{Instant, Duration};
-use std::ops::Sub;
-use std::thread;
-use libusb;
+use std::time::{Duration, Instant};
+use std::fs::File;
+use std::io::Read;
+use std::vec::Vec;
 use minifb::{WindowOptions, Window, Key, Scale};
 
-pub struct NES {
+pub struct NES<'a> {
     cpu: NESCpu,
-    interconnect: Interconnect,
+    mmu: NESMmu<'a>,
+    ppu: NESPpu,
+    apu: NESApu,
+    io: NESIo,
     window: Window,
 
     last_frame_instant: Instant,
@@ -31,11 +36,16 @@ pub struct NES {
     elapsed_cycles: u32,
 }
 
-impl NES {
-    pub fn new() -> NES {
+impl<'a> NES<'a> {
+    pub fn new() -> NES<'a> {
+        let ppu = NESPpu::new();
         NES {
             cpu: NESCpu::new(),
-            interconnect: Interconnect::new(),
+            ppu: ppu,
+            mmu: NESMmu::new(),
+            apu: NESApu::new(),
+            io: NESIo::new(),
+            
             window: Window::new("NES Emulator", ppu::WIDTH, ppu::HEIGHT, WindowOptions {
                 borderless: false,
                 title: true,
@@ -60,15 +70,15 @@ impl NES {
         self.cpu.set_y(0);
         //self.cpu.set_pc(0);
 
-        self.interconnect.write_mem(0x4015, 0); //frame irq enabled
-        self.interconnect.write_mem(0x4017, 0); //all channels disabled
+        self.mmu.write_mem(0x4015, 0); //frame irq enabled
+        self.mmu.write_mem(0x4017, 0); //all channels disabled
 
         for i in 0..0xF {
-            self.interconnect.write_mem(0x4000 + i, 0);
+            self.mmu.write_mem(0x4000 + i, 0);
         }
 
-        let addr_lo = self.interconnect.read_absolute(0xFFFC) as u16;
-        let addr_hi = self.interconnect.read_absolute(0xFFFD) as u16;
+        let addr_lo = self.mmu.read_absolute(0xFFFC) as u16;
+        let addr_hi = self.mmu.read_absolute(0xFFFD) as u16;
 
         let restart_vector = ((addr_hi << 8) | addr_lo)+0;
         println!("Jumping to restart vector {:04X}", restart_vector);
@@ -82,11 +92,31 @@ impl NES {
         let p = self.cpu.p();
         self.cpu.set_p(p | 0x04);
 
-        self.interconnect.write_mem(0x4015, 0);
+        self.mmu.write_mem(0x4015, 0);
     }
 
-    pub fn insert_cart(&mut self, rom: &str) {
-        self.interconnect.insert_cart(rom);
+    pub fn insert_cart(&mut self, rom: &str) -> bool{
+        let mut rom_file = match File::open(rom) {
+            Ok(file) => file,
+            Err(why) => {
+                println!("failed to open rom: {}", why);
+                return false;
+            }
+        };
+
+        let mut data: Vec<u8> = Vec::new();
+
+        match rom_file.read_to_end(&mut data) {
+            Ok(size) => {
+                println!("read rom {:04X} bytes", size);
+                self.mmu.fill_rom(data);
+                return true;
+            }
+            Err(why) => {
+                println!("error reading rom: {}", why);
+                return false;
+            }
+        }
     }
 
     pub fn run(&mut self) {
@@ -95,99 +125,35 @@ impl NES {
         let mut adapter = scanner.find_adapter(0x11c0, 0x5500).unwrap().unwrap();
         let mut listener = adapter.listen().unwrap();
 
-        /*while let Ok(Some(controller)) = listener.read() {
-            println!("A: {}", controller.a);
-            println!("B: {}", controller.b);
-
-            println!("Select: {}", controller.select);
-            println!("Start: {}", controller.start);
-
-            println!("Up: {}", controller.up);
-            println!("Down: {}", controller.down);
-            println!("Left: {}", controller.left);
-            println!("Right: {}", controller.right);
-        }*/
-
-        let mut do_int = true;
         while self.window.is_open() && !self.window.is_key_down(Key::Escape) {
-
             
-            //println!("{}", self.current_cycle);
-            if self.interconnect.ppu().cycles() == 241 && self.interconnect.ppu().ctrl()&0x80 > 0 {
-                //println!("NMI");
-                //self.cpu.do_nmi(&mut self.interconnect);
-            }
-
-            let (success, delta_cycles) = self.cpu.do_instruction(&mut self.interconnect);
+            let (success, delta_cycles) = self.cpu.do_instruction(&mut self.mmu);
             if !success {
-                //self.hard_restart();
-                //self.cpu.offset_pc(1);
                 break;
             }
 
-            self.elapsed_cycles += delta_cycles;
-            self.current_cycle += delta_cycles;
-
-            if self.current_cycle >= 241 && self.current_cycle-delta_cycles < 241 {
-                self.interconnect.ppu().is_vblank(true);
-
-                if self.interconnect.ppu().ctrl()&0x80 > 0 {
-                    self.cpu.do_nmi(&mut self.interconnect);
-                }
-
-                //self.interconnect.render(&mut self.window);
+            if self.ppu.do_cycle(delta_cycles) {
+                self.cpu.do_nmi(&mut self.mmu);
             }
-            else if self.current_cycle >= 340 {
-                self.interconnect.ppu().is_vblank(false);
-            }
-
-            self.interconnect.update(self.current_cycle);
-            self.current_cycle %= 340;
-
-            if self.elapsed_cycles >= 1000 {
-                let t = Duration::new(0,(self.elapsed_cycles*559));
-                //println!("{:?}", t);
-                //thread::sleep(t);
-                self.elapsed_cycles = 0;
-            }
-
+            
             if self.last_frame_instant.elapsed() >= Duration::from_millis(1) {
                 match listener.read() {
                     Ok(Some(controller)) => {
-                        self.interconnect.io().set_controller_button(NESIoButton::A, controller.a);
-                        self.interconnect.io().set_controller_button(NESIoButton::B, controller.b);
-                        self.interconnect.io().set_controller_button(NESIoButton::Select, controller.select);
-                        self.interconnect.io().set_controller_button(NESIoButton::Start, controller.start);
-                        self.interconnect.io().set_controller_button(NESIoButton::Up, controller.up);
-                        self.interconnect.io().set_controller_button(NESIoButton::Down, controller.down);
-                        self.interconnect.io().set_controller_button(NESIoButton::Left, controller.left);
-                        self.interconnect.io().set_controller_button(NESIoButton::Right, controller.right);
-                        /*println!("A: {}", controller.a);
-                        println!("B: {}", controller.b);
-
-                        println!("Select: {}", controller.select);
-                        println!("Start: {}", controller.start);
-
-                        println!("Up: {}", controller.up);
-                        println!("Down: {}", controller.down);
-                        println!("Left: {}", controller.left);
-                        println!("Right: {}", controller.right);*/
+                        self.io.set_controller_button(NESIoButton::A, controller.a);
+                        self.io.set_controller_button(NESIoButton::B, controller.b);
+                        self.io.set_controller_button(NESIoButton::Select, controller.select);
+                        self.io.set_controller_button(NESIoButton::Start, controller.start);
+                        self.io.set_controller_button(NESIoButton::Up, controller.up);
+                        self.io.set_controller_button(NESIoButton::Down, controller.down);
+                        self.io.set_controller_button(NESIoButton::Left, controller.left);
+                        self.io.set_controller_button(NESIoButton::Right, controller.right);
                     }
                     _ => {}
                 }
 
-                self.interconnect.render(&mut self.window);
-                self.interconnect.ppu().update_window(&mut self.window);
                 self.last_frame_instant = Instant::now();
-                //self.window.update();
+                self.window.update();
             }
-
-            if do_int {
-                do_int = false;
-                //self.cpu.do_nmi(&mut self.interconnect);
-            }
-
-            //self.window.update();
         }
     }
 }

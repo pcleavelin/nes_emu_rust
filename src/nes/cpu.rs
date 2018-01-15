@@ -1,9 +1,8 @@
 use std::ops::{BitOr, BitAnd};
 
+use super::mmu::*;
 use super::integer_casting::CastWithNegation;
-use super::interconnect::Interconnect;
 use super::opcode::*;
-use super::opcode::Op::*;
 use enum_primitive::FromPrimitive;
 
 #[derive(Copy, Clone, Debug)]
@@ -494,28 +493,28 @@ impl NESCpu {
         val
     }
 
-    pub fn push_stack(&mut self, interconnect: &mut Interconnect, val: u8) {
-        interconnect.write_mem(0x100 + self.s as usize, val);
+    pub fn push_stack(&mut self, mmu: &mut NESMmu, val: u8) {
+        mmu.write_mem(0x100 + self.s as u16, val);
         self.offset_s(0xFF);
     }
 
-    pub fn pop_stack(&mut self, interconnect: &mut Interconnect) -> u8 {
+    pub fn pop_stack(&mut self, mmu: &mut NESMmu) -> u8 {
         self.offset_s(1);
-        let val = interconnect.read_mem(0x100 + self.s as usize);
+        let val = mmu.read_mem(0x100 + self.s as u16);
 
         val
     }
 
-    pub fn do_nmi(&mut self, interconnect: &mut Interconnect) {
+    pub fn do_nmi(&mut self, mmu: &mut NESMmu) {
         let return_point = self.pc;
 
         let p = self.p.to_u8();
-        self.push_stack(interconnect, ((return_point&0xFF00) >> 8) as u8);
-        self.push_stack(interconnect, (return_point&0xFF) as u8);
-        self.push_stack(interconnect, p);
+        self.push_stack(mmu, ((return_point&0xFF00) >> 8) as u8);
+        self.push_stack(mmu, (return_point&0xFF) as u8);
+        self.push_stack(mmu, p);
 
-        let addr_lo = interconnect.read_absolute(0xFFFA) as u16;
-        let addr_hi = interconnect.read_absolute(0xFFFB) as u16;
+        let addr_lo = mmu.read_absolute(0xFFFA) as u16;
+        let addr_hi = mmu.read_absolute(0xFFFB) as u16;
 
         self.pc = (addr_hi << 8) | addr_lo;
     }
@@ -677,11 +676,11 @@ impl NESCpu {
     }
 
     //6502 opcode info http://obelisk.me.uk/6502/reference.html
-    pub fn do_instruction(&mut self, interconnect: &mut Interconnect) -> (bool, u32) {
+    pub fn do_instruction(&mut self, mmu: &mut NESMmu) -> (bool, u32) {
         //Read 3 bytes (1st is opcode, 2nd is first operand (if any), 3rd is second operand (if any))
-        let op = interconnect.read_mem(self.pc as usize) as u32;
-        let imm1 = (interconnect.read_mem((self.pc.wrapping_add(1)) as usize) as u32) << 8;
-        let imm2 = (interconnect.read_mem((self.pc.wrapping_add(2)) as usize) as u32) << 16;
+        let op = mmu.read_mem(self.pc) as u32;
+        let imm1 = (mmu.read_mem(self.pc.wrapping_add(1)) as u32) << 8;
+        let imm2 = (mmu.read_mem(self.pc.wrapping_add(2)) as u32) << 16;
 
         let opcode = Opcode::new(op | imm1 | imm2);
         let mut delta_cycles = 0;
@@ -704,12 +703,12 @@ impl NESCpu {
                             let return_point = self.pc.wrapping_add(2);
 
                             let p = self.p.to_u8();
-                            self.push_stack(interconnect, ((return_point&0xFF00) >> 8) as u8);
-                            self.push_stack(interconnect, (return_point&0xFF) as u8);
-                            self.push_stack(interconnect, p);
+                            self.push_stack(mmu, ((return_point&0xFF00) >> 8) as u8);
+                            self.push_stack(mmu, (return_point&0xFF) as u8);
+                            self.push_stack(mmu, p);
 
-                            let addr_lo = interconnect.read_absolute(0xFFFE) as u16;
-                            let addr_hi = interconnect.read_absolute(0xFFFF) as u16;
+                            let addr_lo = mmu.read_absolute(0xFFFE) as u16;
+                            let addr_hi = mmu.read_absolute(0xFFFF) as u16;
 
                             self.pc = (addr_hi << 8) | addr_lo;
                         //} else {
@@ -720,7 +719,7 @@ impl NESCpu {
                     }
 
                     Op::ORAIndirectX => {
-                        let mut val = interconnect.read_indexed_indirect_x(opcode.imm1() as usize, self.x as usize);
+                        let mut val = mmu.read_indexed_indirect_x(opcode.imm1(), self.x);
                         let a = self.a;
                         val = self.or(a, val);
 
@@ -732,7 +731,7 @@ impl NESCpu {
                     //ORs the accumulator with memory
                     //(modifies zero and negative flag)
                     Op::ORAZeroPage => {
-                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let mut val = mmu.read_zero_page(opcode.imm1());
                         let a = self.a;
                         val = self.or(a, val);
 
@@ -751,10 +750,10 @@ impl NESCpu {
                     }
 
                     Op::ASLZeroPage => {
-                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let mut val = mmu.read_zero_page(opcode.imm1());
                         val = self.shift_left(val);
 
-                        interconnect.write_zero_page(opcode.imm1() as usize, val);
+                        mmu.write_zero_page(opcode.imm1(), val);
 
                         self.offset_pc(2);
                     }
@@ -763,7 +762,7 @@ impl NESCpu {
                         let mut p = self.p.to_u8();
                         p |= 1 << 4;
                         p |= 1 << 5;
-                        self.push_stack(interconnect, p);
+                        self.push_stack(mmu, p);
 
                         self.offset_pc(1);
                     }
@@ -777,7 +776,7 @@ impl NESCpu {
                     }
 
                     Op::ORAAbsolute => {
-                        let val = interconnect.read_absolute(opcode.abs_addr() as usize);
+                        let val = mmu.read_absolute(opcode.abs_addr());
                         let a = self.a;
 
                         self.a = self.or(a, val);
@@ -786,11 +785,11 @@ impl NESCpu {
                     }
 
                     Op::ASLAbsolute => {
-                        let mut val = interconnect.read_absolute(opcode.abs_addr() as usize);
+                        let mut val = mmu.read_absolute(opcode.abs_addr());
 
                         val = self.shift_left(val);
 
-                        interconnect.write_absolute(opcode.abs_addr(), val);
+                        mmu.write_absolute(opcode.abs_addr(), val);
 
                         self.offset_pc(3);
                     }
@@ -807,7 +806,7 @@ impl NESCpu {
                     }
 
                     Op::ORAIndirectY => {
-                        let mut val = interconnect.read_indexed_indirect_y(opcode.imm1() as usize, self.y as usize);
+                        let mut val = mmu.read_indexed_indirect_y(opcode.imm1(), self.y);
                         let a = self.a;
                         val = self.or(a, val);
 
@@ -817,7 +816,7 @@ impl NESCpu {
                     }
 
                     Op::ORAZeroPageX => {
-                        let mut val = interconnect.read_zero_paged_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let mut val = mmu.read_zero_paged_indexed_x(opcode.imm1(), self.x);
                         let a = self.a;
 
                         let val = self.or(a, val);
@@ -828,10 +827,10 @@ impl NESCpu {
                     }
 
                     Op::ASLZeroPageX => {
-                        let mut val = interconnect.read_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize);
+                        let mut val = mmu.read_zero_paged_indexed_x(opcode.imm1(), self.x);
                         val = self.shift_left(val);
 
-                        interconnect.write_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize, val);
+                        mmu.write_zero_paged_indexed_x(opcode.imm1(), self.x, val);
 
                         self.offset_pc(2);
                     }
@@ -844,7 +843,7 @@ impl NESCpu {
                     }
 
                     Op::ORAAbsoluteY => {
-                        let mut val = interconnect.read_absolute_indexed_y(opcode.abs_addr(), self.y as usize);
+                        let mut val = mmu.read_absolute_indexed_y(opcode.abs_addr(), self.y);
                         let a = self.a;
 
                         val = self.or(a, val);
@@ -855,7 +854,7 @@ impl NESCpu {
                     }
 
                     Op::ORAAbsoluteX => {
-                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let mut val = mmu.read_absolute_indexed_x(opcode.abs_addr(), self.x);
                         let a = self.a;
 
                         val = self.or(a, val);
@@ -866,11 +865,11 @@ impl NESCpu {
                     }
 
                     Op::ASLAbsoluteX => {
-                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr() as usize, self.x as usize);
+                        let mut val = mmu.read_absolute_indexed_x(opcode.abs_addr(), self.x);
 
                         val = self.shift_left(val);
 
-                        interconnect.write_absolute_indexed_x(opcode.abs_addr(), self.x as usize, val);
+                        mmu.write_absolute_indexed_x(opcode.abs_addr(), self.x, val);
 
                         self.offset_pc(3);
                     }
@@ -882,15 +881,15 @@ impl NESCpu {
                         let return_point = self.pc.wrapping_add(2);
                         let addr = opcode.abs_addr() as u16;
 
-                        self.push_stack(interconnect, ((return_point&0xFF00) >> 8) as u8);
-                        self.push_stack(interconnect, (return_point&0xFF) as u8);
+                        self.push_stack(mmu, ((return_point&0xFF00) >> 8) as u8);
+                        self.push_stack(mmu, (return_point&0xFF) as u8);
                         self.pc = addr;
 
                         println!("Jumping to 0x{:04X}", self.pc);
                     }
 
                     Op::ANDIndirectX => {
-                        let mut val = interconnect.read_indexed_indirect_x(opcode.imm1() as usize, self.x as usize);
+                        let mut val = mmu.read_indexed_indirect_x(opcode.imm1(), self.x);
                         let a = self.a;
 
                         let val = self.and(a, val);
@@ -901,7 +900,7 @@ impl NESCpu {
                     }
                     
                     Op::BITZeroPage => {
-                        let val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let val = mmu.read_zero_page(opcode.imm1());
                         let a = self.a;
 
                         let _ = self.and(a, val);
@@ -913,7 +912,7 @@ impl NESCpu {
                     }
 
                     Op::ANDAbsolute => {
-                        let val = interconnect.read_absolute(opcode.abs_addr() as usize);
+                        let val = mmu.read_absolute(opcode.abs_addr());
                         let a = self.a;
 
                         self.a = self.and(a, val);
@@ -922,7 +921,7 @@ impl NESCpu {
                     }
 
                     Op::ANDZeroPage => {
-                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let mut val = mmu.read_zero_page(opcode.imm1());
                         let a = self.a;
 
                         let val = self.and(a, val);
@@ -933,16 +932,16 @@ impl NESCpu {
                     }
 
                     Op::ROLZeroPage => {
-                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let mut val = mmu.read_zero_page(opcode.imm1());
                         val = self.rol(val);
 
-                        interconnect.write_zero_page(opcode.imm1() as usize, val);
+                        mmu.write_zero_page(opcode.imm1(), val);
 
                         self.offset_pc(2);
                     }
 
                     Op::PLPImplied => {
-                        let val = self.pop_stack(interconnect);
+                        let val = self.pop_stack(mmu);
 
                         self.p = CPUStatus::from(val);
 
@@ -967,7 +966,7 @@ impl NESCpu {
                     }
 
                     Op::BITAbsolute => {
-                        let val = interconnect.read_absolute(opcode.abs_addr() as usize);
+                        let val = mmu.read_absolute(opcode.abs_addr());
                         let a = self.a;
 
                         let _ = self.and(a, val);
@@ -979,10 +978,10 @@ impl NESCpu {
                     }
 
                     Op::ROLAbsolute => {
-                        let mut val = interconnect.read_absolute(opcode.abs_addr() as usize);
+                        let mut val = mmu.read_absolute(opcode.abs_addr());
                         val = self.rol(val);
 
-                        interconnect.write_absolute(opcode.abs_addr(), val);
+                        mmu.write_absolute(opcode.abs_addr(), val);
 
                         self.offset_pc(3);
                     }
@@ -998,7 +997,7 @@ impl NESCpu {
                     }
 
                     Op::ANDIndirectY => {
-                        let mut val = interconnect.read_indexed_indirect_y(opcode.imm1() as usize, self.y as usize);
+                        let mut val = mmu.read_indexed_indirect_y(opcode.imm1(), self.y);
                         let a = self.a;
 
                         let val = self.and(a, val);
@@ -1009,7 +1008,7 @@ impl NESCpu {
                     }
 
                     Op::ANDAbsoluteY => {
-                        let mut val = interconnect.read_absolute_indexed_y(opcode.abs_addr(), self.y as usize);
+                        let mut val = mmu.read_absolute_indexed_y(opcode.abs_addr(), self.y);
                         let a = self.a;
 
                         let val = self.and(a, val);
@@ -1020,7 +1019,7 @@ impl NESCpu {
                     }
 
                     Op::ANDAbsoluteX => {
-                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let mut val = mmu.read_absolute_indexed_x(opcode.abs_addr(), self.x);
                         let a = self.a;
 
                         let val = self.and(a, val);
@@ -1031,7 +1030,7 @@ impl NESCpu {
                     }
 
                     Op::ANDZeroPageX => {
-                        let mut val = interconnect.read_zero_paged_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let mut val = mmu.read_zero_paged_indexed_x(opcode.imm1(), self.x);
                         let a = self.a;
 
                         let val = self.and(a, val);
@@ -1042,11 +1041,11 @@ impl NESCpu {
                     }
 
                     Op::ROLZeroPageX => {
-                        let mut val = interconnect.read_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize);
+                        let mut val = mmu.read_zero_paged_indexed_x(opcode.imm1(), self.x);
                         
                         val = self.rol(val);
 
-                        interconnect.write_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize, val);
+                        mmu.write_zero_paged_indexed_x(opcode.imm1(), self.x, val);
 
                         self.offset_pc(2);
                     }
@@ -1058,19 +1057,19 @@ impl NESCpu {
                     }
 
                     Op::ROLAbsoluteX => {
-                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let mut val = mmu.read_absolute_indexed_x(opcode.abs_addr(), self.x);
                         
                         val = self.rol(val);
 
-                        interconnect.write_absolute_indexed_x(opcode.abs_addr(), self.x as usize, val);
+                        mmu.write_absolute_indexed_x(opcode.abs_addr(), self.x, val);
 
                         self.offset_pc(3);
                     }
 
                     Op::RTIImplied => {
-                        let p = self.pop_stack(interconnect) as u8;
-                        let lo = self.pop_stack(interconnect) as u16;
-                        let hi = self.pop_stack(interconnect) as u16;
+                        let p = self.pop_stack(mmu) as u8;
+                        let lo = self.pop_stack(mmu) as u16;
+                        let hi = self.pop_stack(mmu) as u16;
                         let ret = (hi << 8) | lo;
 
                         self.p = CPUStatus::from(p);
@@ -1078,7 +1077,7 @@ impl NESCpu {
                     }
 
                     Op::EORIndirectX => {
-                        let mut val = interconnect.read_indexed_indirect_x(opcode.imm1() as usize, self.x as usize);
+                        let mut val = mmu.read_indexed_indirect_x(opcode.imm1(), self.x);
                         let a = self.a;
                         val = self.eor(a, val);
 
@@ -1088,16 +1087,16 @@ impl NESCpu {
                     }
 
                     Op::LSRZeroPage => {
-                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let mut val = mmu.read_zero_page(opcode.imm1());
                         val = self.shift_right(val);
 
-                        interconnect.write_zero_page(opcode.imm1() as usize, val);
+                        mmu.write_zero_page(opcode.imm1(), val);
 
                         self.offset_pc(2);
                     }
 
                     Op::EORZeroPage => {
-                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let mut val = mmu.read_zero_page(opcode.imm1());
                         let a = self.a;
                         val = self.eor(a, val);
 
@@ -1108,7 +1107,7 @@ impl NESCpu {
 
                     Op::PHAImplied => {
                         let a = self.a;
-                        self.push_stack(interconnect, a);
+                        self.push_stack(mmu, a);
 
                         self.offset_pc(1);
                     }
@@ -1132,7 +1131,7 @@ impl NESCpu {
                     }
 
                     Op::EORAbsolute => {
-                        let val = interconnect.read_absolute(opcode.abs_addr() as usize);
+                        let val = mmu.read_absolute(opcode.abs_addr());
                         let a = self.a;
 
                         self.a = self.eor(a, val);
@@ -1141,11 +1140,11 @@ impl NESCpu {
                     }
 
                     Op::LSRAbsolute => {
-                        let mut val = interconnect.read_absolute(opcode.abs_addr() as usize);
+                        let mut val = mmu.read_absolute(opcode.abs_addr());
 
                         val = self.shift_right(val);
 
-                        interconnect.write_absolute(opcode.abs_addr(), val);
+                        mmu.write_absolute(opcode.abs_addr(), val);
 
                         self.offset_pc(3);
                     }
@@ -1161,7 +1160,7 @@ impl NESCpu {
                     }
 
                     Op::EORIndirectY => {
-                        let mut val = interconnect.read_indexed_indirect_y(opcode.imm1() as usize, self.y as usize);
+                        let mut val = mmu.read_indexed_indirect_y(opcode.imm1(), self.y);
                         let a = self.a;
                         val = self.eor(a, val);
 
@@ -1171,7 +1170,7 @@ impl NESCpu {
                     }
 
                     Op::EORZeroPageX => {
-                        let mut val = interconnect.read_zero_paged_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let mut val = mmu.read_zero_paged_indexed_x(opcode.imm1(), self.x);
                         let a = self.a;
 
                         let val = self.eor(a, val);
@@ -1182,10 +1181,10 @@ impl NESCpu {
                     }
 
                     Op::LSRZeroPageX => {
-                        let mut val = interconnect.read_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize);
+                        let mut val = mmu.read_zero_paged_indexed_x(opcode.imm1(), self.x);
                         val = self.shift_right(val);
 
-                        interconnect.write_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize, val);
+                        mmu.write_zero_paged_indexed_x(opcode.imm1(), self.x, val);
 
                         self.offset_pc(2);
                     }
@@ -1197,7 +1196,7 @@ impl NESCpu {
                     }
 
                     Op::EORAbsoluteY => {
-                        let mut val = interconnect.read_absolute_indexed_y(opcode.abs_addr(), self.y as usize);
+                        let mut val = mmu.read_absolute_indexed_y(opcode.abs_addr(), self.y);
                         let a = self.a;
 
                         let val = self.eor(a, val);
@@ -1208,7 +1207,7 @@ impl NESCpu {
                     }
 
                     Op::EORAbsoluteX => {
-                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let mut val = mmu.read_absolute_indexed_x(opcode.abs_addr(), self.x);
                         let a = self.a;
 
                         let val = self.eor(a, val);
@@ -1219,11 +1218,11 @@ impl NESCpu {
                     }
 
                     Op::LSRAbsoluteX => {
-                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr() as usize, self.x as usize);
+                        let mut val = mmu.read_absolute_indexed_x(opcode.abs_addr(), self.x);
 
                         val = self.shift_right(val);
 
-                        interconnect.write_absolute_indexed_x(opcode.abs_addr(), self.x as usize, val);
+                        mmu.write_absolute_indexed_x(opcode.abs_addr(), self.x, val);
 
                         self.offset_pc(3);
                     }
@@ -1231,8 +1230,8 @@ impl NESCpu {
                     Op::RTSImplied => {
                         print!("Returning from 0x{:04X} sp: 0x{:04X} -- ", self.pc, self.s);
 
-                        let lo = self.pop_stack(interconnect) as u16;
-                        let hi = self.pop_stack(interconnect) as u16;
+                        let lo = self.pop_stack(mmu) as u16;
+                        let hi = self.pop_stack(mmu) as u16;
                         let ret = (hi << 8) | lo;
 
                         self.pc = ret;
@@ -1244,7 +1243,7 @@ impl NESCpu {
                     }
 
                     Op::ADCIndirectX => {
-                        let mut val = interconnect.read_indexed_indirect_x(opcode.imm1() as usize, self.x as usize);
+                        let mut val = mmu.read_indexed_indirect_x(opcode.imm1(), self.x);
                         let a = self.a;
                         val = self.add_with_carry(a, val);
 
@@ -1254,7 +1253,7 @@ impl NESCpu {
                     }
 
                     Op::ADCZeroPage => {
-                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let mut val = mmu.read_zero_page(opcode.imm1());
                         let a = self.a;
                         val = self.add_with_carry(a, val);
 
@@ -1264,17 +1263,17 @@ impl NESCpu {
                     }
 
                     Op::RORZeroPage => {
-                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let mut val = mmu.read_zero_page(opcode.imm1());
                         
                         val = self.ror(val);
 
-                        interconnect.write_zero_page(opcode.imm1() as usize, val);
+                        mmu.write_zero_page(opcode.imm1(), val);
 
                         self.offset_pc(2);
                     }
 
                     Op::PLAImplied => {
-                        let val = self.pop_stack(interconnect);
+                        let val = self.pop_stack(mmu);
 
                         self.set_a(val);
 
@@ -1291,7 +1290,7 @@ impl NESCpu {
                     }
 
                     Op::ADCAbsolute => {
-                        let mut val = interconnect.read_absolute(opcode.abs_addr());
+                        let mut val = mmu.read_absolute(opcode.abs_addr());
                         let a = self.a;
                         val = self.add_with_carry(a, val);
 
@@ -1301,11 +1300,11 @@ impl NESCpu {
                     }
 
                     Op::RORAbsolute => {
-                        let mut val = interconnect.read_absolute(opcode.abs_addr());
+                        let mut val = mmu.read_absolute(opcode.abs_addr());
                         
                         val = self.ror(val);
 
-                        interconnect.write_absolute(opcode.abs_addr(), val);
+                        mmu.write_absolute(opcode.abs_addr(), val);
 
                         self.offset_pc(3);
                     }
@@ -1321,7 +1320,7 @@ impl NESCpu {
                     }
 
                     Op::ADCIndirectY => {
-                        let mut val = interconnect.read_indexed_indirect_y(opcode.imm1() as usize, self.y as usize);
+                        let mut val = mmu.read_indexed_indirect_y(opcode.imm1(), self.y);
                         let a = self.a;
                         val = self.add_with_carry(a, val);
 
@@ -1331,7 +1330,7 @@ impl NESCpu {
                     }
 
                     Op::ADCZeroPageX => {
-                        let mut val = interconnect.read_zero_paged_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let mut val = mmu.read_zero_paged_indexed_x(opcode.imm1(), self.x);
                         let a = self.a;
 
                         let val = self.add_with_carry(a, val);
@@ -1342,11 +1341,11 @@ impl NESCpu {
                     }
 
                     Op::RORZeroPageX => {
-                        let mut val = interconnect.read_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize);
+                        let mut val = mmu.read_zero_paged_indexed_x(opcode.imm1(), self.x);
                         
                         val = self.ror(val);
 
-                        interconnect.write_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize, val);
+                        mmu.write_zero_paged_indexed_x(opcode.imm1(), self.x, val);
 
                         self.offset_pc(2);
                     }
@@ -1359,7 +1358,7 @@ impl NESCpu {
                     }
 
                     Op::ADCAbsoluteY => {
-                        let mut val = interconnect.read_absolute_indexed_y(opcode.abs_addr(), self.y as usize);
+                        let mut val = mmu.read_absolute_indexed_y(opcode.abs_addr(), self.y);
                         let a = self.a;
                         val = self.add_with_carry(a, val);
 
@@ -1369,7 +1368,7 @@ impl NESCpu {
                     }
 
                     Op::ADCAbsoluteX => {
-                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let mut val = mmu.read_absolute_indexed_x(opcode.abs_addr(), self.x);
                         let a = self.a;
                         val = self.add_with_carry(a, val);
 
@@ -1379,11 +1378,11 @@ impl NESCpu {
                     }
 
                     Op::RORAbsoluteX => {
-                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let mut val = mmu.read_absolute_indexed_x(opcode.abs_addr(), self.x);
                         
                         val = self.ror(val);
 
-                        interconnect.write_absolute_indexed_x(opcode.abs_addr(), self.x as usize, val);
+                        mmu.write_absolute_indexed_x(opcode.abs_addr(), self.x, val);
 
                         self.offset_pc(3);
                     }
@@ -1397,31 +1396,31 @@ impl NESCpu {
                     }
 
                     Op::JMPAbsIndirect => {
-                        let addr = interconnect.read_absolute(opcode.abs_addr()) as u16 | ((interconnect.read_absolute(opcode.abs_addr() + 1) as u16) << 8);
+                        let addr = mmu.read_absolute(opcode.abs_addr()) as u16 | ((mmu.read_absolute(opcode.abs_addr() + 1) as u16) << 8);
 
                         self.pc = addr;
                     }
 
                     Op::STAIndirectX => {
-                        interconnect.write_indexed_indirect_x(opcode.imm1() as usize, self.x as usize, self.a);
+                        mmu.write_indexed_indirect_x(opcode.imm1(), self.x, self.a);
 
                         self.offset_pc(2);
                     }
 
                     Op::STYZeroPage => {
-                        interconnect.write_zero_page(opcode.imm1() as usize, self.y);
+                        mmu.write_zero_page(opcode.imm1(), self.y);
 
                         self.offset_pc(2);
                     }
 
                     Op::STAZeroPage => {
-                        interconnect.write_zero_page(opcode.imm1() as usize, self.a);
+                        mmu.write_zero_page(opcode.imm1(), self.a);
 
                         self.offset_pc(2);
                     }
 
                     Op::STXZeroPage => {
-                        interconnect.write_zero_page(opcode.imm1() as usize, self.x);
+                        mmu.write_zero_page(opcode.imm1(), self.x);
 
                         self.offset_pc(2);
                     }
@@ -1440,20 +1439,20 @@ impl NESCpu {
                     }
 
                     Op::STYAbsolute => {
-                        interconnect.write_absolute(opcode.abs_addr(), self.y);
+                        mmu.write_absolute(opcode.abs_addr(), self.y);
 
                         self.offset_pc(3);
                     }
 
                     Op::STXAbsolute => {
-                        interconnect.write_absolute(opcode.abs_addr(), self.x);
+                        mmu.write_absolute(opcode.abs_addr(), self.x);
 
                         self.offset_pc(3);
                     }
 
                     //Store Accumulator (Stores a into memory with absolute addressing)
                     Op::STAAbsolute => {
-                        interconnect.write_absolute(opcode.abs_addr(), self.a);
+                        mmu.write_absolute(opcode.abs_addr(), self.a);
 
                         self.offset_pc(3);
                     }
@@ -1469,26 +1468,26 @@ impl NESCpu {
                     }
 
                     Op::STAIndirectY => {
-                        interconnect.write_indexed_indirect_y(opcode.imm1() as usize, self.y as usize, self.a);
+                        mmu.write_indexed_indirect_y(opcode.imm1(), self.y, self.a);
 
                         self.offset_pc(2);
                     }
 
                     Op::STYZeroPageX => {
-                        interconnect.write_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize, self.y);
+                        mmu.write_zero_paged_indexed_x(opcode.imm1(), self.x, self.y);
 
                         self.offset_pc(2);
                     }
 
                     //Store Accumulator (Stores into memory with zero paged x addressing)
                     Op::STAZeroPageX => {
-                        interconnect.write_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize, self.a);
+                        mmu.write_zero_paged_indexed_x(opcode.imm1(), self.x, self.a);
 
                         self.offset_pc(2);
                     }
 
                     Op::STXZeroPageY => {
-                        interconnect.write_zero_paged_indexed_y(opcode.imm1() as usize, self.y as usize, self.x);
+                        mmu.write_zero_paged_indexed_y(opcode.imm1(), self.y, self.x);
 
                         self.offset_pc(2);
                     }
@@ -1501,7 +1500,7 @@ impl NESCpu {
                     }
 
                     Op::STAAbsoluteY => {
-                        interconnect.write_absolute_indexed_y(opcode.abs_addr(), self.y as usize, self.a);
+                        mmu.write_absolute_indexed_y(opcode.abs_addr(), self.y, self.a);
 
                         self.offset_pc(3);
                     }
@@ -1516,7 +1515,7 @@ impl NESCpu {
                     }
 
                     Op::STAAbsoluteX => {
-                        interconnect.write_absolute_indexed_x(opcode.abs_addr(), self.x as usize, self.a);
+                        mmu.write_absolute_indexed_x(opcode.abs_addr(), self.x, self.a);
 
                         self.offset_pc(3);
                     }
@@ -1529,7 +1528,7 @@ impl NESCpu {
                     }
 
                     Op::LDAIndirectX => {
-                        let val = interconnect.read_indexed_indirect_x(opcode.imm1() as usize, self.x as usize);
+                        let val = mmu.read_indexed_indirect_x(opcode.imm1(), self.x);
 
                         self.set_a(val);
 
@@ -1544,7 +1543,7 @@ impl NESCpu {
                     }
 
                     Op::LDYZeroPage => {
-                        let val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let val = mmu.read_zero_page(opcode.imm1());
 
                         self.set_y(val);
 
@@ -1552,7 +1551,7 @@ impl NESCpu {
                     }
 
                     Op::LDXZeroPage => {
-                        let val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let val = mmu.read_zero_page(opcode.imm1());
 
                         self.set_x(val);
 
@@ -1582,7 +1581,7 @@ impl NESCpu {
                     }
 
                     Op::LDYAbsolute => {
-                        let val = interconnect.read_absolute(opcode.abs_addr());
+                        let val = mmu.read_absolute(opcode.abs_addr());
 
                         self.set_y(val);
 
@@ -1591,7 +1590,7 @@ impl NESCpu {
 
 
                     Op::LDXAbsolute => {
-                        let val = interconnect.read_absolute(opcode.abs_addr());
+                        let val = mmu.read_absolute(opcode.abs_addr());
 
                         self.set_x(val);
 
@@ -1599,7 +1598,7 @@ impl NESCpu {
                     }
 
                     Op::LDAZeroPage => {
-                        let val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let val = mmu.read_zero_page(opcode.imm1());
 
                         self.set_a(val);
 
@@ -1609,7 +1608,7 @@ impl NESCpu {
                     //Loads operand into accumulator using absolute addressing
                     //(modifies zero and negatives flags)
                     Op::LDAAbsolute => {
-                        let val = interconnect.read_absolute(opcode.abs_addr());
+                        let val = mmu.read_absolute(opcode.abs_addr());
 
                         self.set_a(val);
 
@@ -1628,7 +1627,7 @@ impl NESCpu {
                     }
 
                     Op::LDAIndirectY => {
-                        let val = interconnect.read_indexed_indirect_y(opcode.imm1() as usize, self.y as usize);
+                        let val = mmu.read_indexed_indirect_y(opcode.imm1(), self.y);
 
                         self.set_a(val);
 
@@ -1637,7 +1636,7 @@ impl NESCpu {
 
                     //Loads value into y-index from zero page x memory
                     Op::LDYZeroPageX => {
-                        let val = interconnect.read_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize);
+                        let val = mmu.read_zero_paged_indexed_x(opcode.imm1(), self.x);
 
                         self.set_y(val);
 
@@ -1646,7 +1645,7 @@ impl NESCpu {
 
                     //Loads value into accumulator from zero page x memory
                     Op::LDAZeroPageX => {
-                        let val = interconnect.read_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize);
+                        let val = mmu.read_zero_paged_indexed_x(opcode.imm1(), self.x);
 
                         self.set_a(val);
 
@@ -1654,7 +1653,7 @@ impl NESCpu {
                     }
 
                     Op::LDXZeroPageY => {
-                        let val = interconnect.read_zero_paged_indexed_y(opcode.imm1() as usize, self.y as usize);
+                        let val = mmu.read_zero_paged_indexed_y(opcode.imm1(), self.y);
 
                         self.set_x(val);
 
@@ -1668,7 +1667,7 @@ impl NESCpu {
                     }
 
                     Op::LDAAbsoluteY => {
-                        let val = interconnect.read_absolute_indexed_y(opcode.abs_addr(), self.y as usize);
+                        let val = mmu.read_absolute_indexed_y(opcode.abs_addr(), self.y);
 
                         self.set_a(val);
 
@@ -1684,7 +1683,7 @@ impl NESCpu {
                     }
 
                     Op::LDYAbsoluteX => {
-                        let val = interconnect.read_absolute_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let val = mmu.read_absolute_indexed_x(opcode.abs_addr(), self.x);
                         
                         self.set_y(val);
 
@@ -1694,7 +1693,7 @@ impl NESCpu {
                     //Loads operand into accumulator using absolute indexed addressing
                     //(modifies zero and negatives flags)
                     Op::LDAAbsoluteX => {
-                        let val = interconnect.read_absolute_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let val = mmu.read_absolute_indexed_x(opcode.abs_addr(), self.x);
                         
                         self.set_a(val);
 
@@ -1702,7 +1701,7 @@ impl NESCpu {
                     }
 
                     Op::LDXAbsoluteY => {
-                        let val = interconnect.read_absolute_indexed_y(opcode.abs_addr(), self.y as usize);
+                        let val = mmu.read_absolute_indexed_y(opcode.abs_addr(), self.y);
                         
                         self.set_x(val);
 
@@ -1719,7 +1718,7 @@ impl NESCpu {
                     }
 
                     Op::CMPIndirectX => {
-                        let val = interconnect.read_indexed_indirect_x(opcode.imm1() as usize, self.x as usize);
+                        let val = mmu.read_indexed_indirect_x(opcode.imm1(), self.x);
                         let a = self.a;
                         let _ = self.subtract(a, val);
 
@@ -1727,7 +1726,7 @@ impl NESCpu {
                     }
 
                     Op::CMPZeroPage => {
-                        let val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let val = mmu.read_zero_page(opcode.imm1());
                         let a = self.a;
                         let _ = self.subtract(a, val);
 
@@ -1735,10 +1734,10 @@ impl NESCpu {
                     }
 
                     Op::DECZeroPage => {
-                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let mut val = mmu.read_zero_page(opcode.imm1());
                         val = self.subtract_no_carry(val, 1);
 
-                        interconnect.write_zero_page(opcode.imm1() as usize, val);
+                        mmu.write_zero_page(opcode.imm1(), val);
 
                         self.offset_pc(2);
                     }
@@ -1768,7 +1767,7 @@ impl NESCpu {
 
                     Op::CPYAbsolute => {
                         let y = self.y;
-                        let val = interconnect.read_absolute(opcode.abs_addr() as usize);
+                        let val = mmu.read_absolute(opcode.abs_addr());
                         let _ = self.subtract(y, val);
 
                         self.offset_pc(3);
@@ -1776,17 +1775,17 @@ impl NESCpu {
 
                     Op::CMPAbsolute => {
                         let a = self.a;
-                        let val = interconnect.read_absolute(opcode.abs_addr() as usize);
+                        let val = mmu.read_absolute(opcode.abs_addr());
                         let _ = self.subtract(a, val);
 
                         self.offset_pc(3);
                     }
                     
                     Op::DECAbsolute => {
-                        let mut val = interconnect.read_absolute(opcode.abs_addr() as usize);
+                        let mut val = mmu.read_absolute(opcode.abs_addr());
                         val = self.subtract_no_carry(val, 1);
 
-                        interconnect.write_absolute(opcode.abs_addr() as usize, val);
+                        mmu.write_absolute(opcode.abs_addr(), val);
 
                         self.offset_pc(3);
                     }
@@ -1803,7 +1802,7 @@ impl NESCpu {
                     }
 
                     Op::CMPIndirectY => {
-                        let val = interconnect.read_indexed_indirect_y(opcode.imm1() as usize, self.y as usize);
+                        let val = mmu.read_indexed_indirect_y(opcode.imm1(), self.y);
                         let a = self.a;
                         let _ = self.subtract(a, val);
 
@@ -1811,7 +1810,7 @@ impl NESCpu {
                     }
 
                     Op::CMPZeroPageX => {
-                        let val = interconnect.read_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize);
+                        let val = mmu.read_zero_paged_indexed_x(opcode.imm1(), self.x);
                         let a = self.a;
                         let _ = self.subtract(a, val);
 
@@ -1819,10 +1818,10 @@ impl NESCpu {
                     }
 
                     Op::DECZeroPageX => {
-                        let mut val = interconnect.read_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize);
+                        let mut val = mmu.read_zero_paged_indexed_x(opcode.imm1(), self.x);
                         val = self.subtract_no_carry(val, 1);
 
-                        interconnect.write_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize, val);
+                        mmu.write_zero_paged_indexed_x(opcode.imm1(), self.x, val);
 
                         self.offset_pc(2);
                     }
@@ -1836,7 +1835,7 @@ impl NESCpu {
 
                     Op::CMPAbsoluteY => {
                         let a = self.a;
-                        let val = interconnect.read_absolute_indexed_y(opcode.abs_addr() as usize, self.y as usize);
+                        let val = mmu.read_absolute_indexed_y(opcode.abs_addr(), self.y);
                         let _ = self.subtract(a, val);
 
                         self.offset_pc(3);
@@ -1844,17 +1843,17 @@ impl NESCpu {
 
                     Op::CMPAbsoluteX => {
                         let a = self.a;
-                        let val = interconnect.read_absolute_indexed_x(opcode.abs_addr() as usize, self.x as usize);
+                        let val = mmu.read_absolute_indexed_x(opcode.abs_addr(), self.x);
                         let _ = self.subtract(a, val);
 
                         self.offset_pc(3);
                     }
 
                     Op::DECAbsoluteX => {
-                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr() as usize, self.x as usize);
+                        let mut val = mmu.read_absolute_indexed_x(opcode.abs_addr(), self.x);
                         val = self.subtract_no_carry(val, 1);
 
-                        interconnect.write_absolute_indexed_x(opcode.abs_addr() as usize, self.x as usize, val);
+                        mmu.write_absolute_indexed_x(opcode.abs_addr(), self.x, val);
 
                         self.offset_pc(3);
                     }
@@ -1867,7 +1866,7 @@ impl NESCpu {
                     }
 
                     Op::SBCIndirectX => {
-                        let mut val = interconnect.read_indexed_indirect_x(opcode.imm1() as usize, self.x as usize);
+                        let mut val = mmu.read_indexed_indirect_x(opcode.imm1(), self.x);
                         let a = self.a;
                         val = self.subtract_with_carry(a, val);
 
@@ -1877,7 +1876,7 @@ impl NESCpu {
                     }
 
                     Op::CPYZeroPage => {
-                        let val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let val = mmu.read_zero_page(opcode.imm1());
                         let y = self.y;
                         let _ = self.subtract(y, val);
 
@@ -1885,7 +1884,7 @@ impl NESCpu {
                     }
 
                     Op::CPXZeroPage => {
-                        let val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let val = mmu.read_zero_page(opcode.imm1());
                         let x = self.x;
                         let _ = self.subtract(x, val);
 
@@ -1893,7 +1892,7 @@ impl NESCpu {
                     }
                     
                     Op::SBCZeroPage => {
-                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let mut val = mmu.read_zero_page(opcode.imm1());
                         let a = self.a;
                         val = self.subtract_with_carry(a, val);
 
@@ -1903,10 +1902,10 @@ impl NESCpu {
                     }
 
                     Op::INCZeroPage => {
-                        let mut val = interconnect.read_zero_page(opcode.imm1() as usize);
+                        let mut val = mmu.read_zero_page(opcode.imm1());
                         val = self.add_no_carry(val, 1);
 
-                        interconnect.write_zero_page(opcode.imm1() as usize, val);
+                        mmu.write_zero_page(opcode.imm1(), val);
 
                         self.offset_pc(2);
                     }
@@ -1926,23 +1925,23 @@ impl NESCpu {
 
                     Op::CPXAbsolute => {
                         let x = self.x;
-                        let val = interconnect.read_absolute(opcode.abs_addr() as usize);
+                        let val = mmu.read_absolute(opcode.abs_addr());
                         let _ = self.subtract(x, val);
 
                         self.offset_pc(3);
                     }
 
                     Op::INCAbsolute => {
-                        let mut val = interconnect.read_absolute(opcode.abs_addr() as usize);
+                        let mut val = mmu.read_absolute(opcode.abs_addr());
                         val = self.add_no_carry(val, 1);
 
-                        interconnect.write_absolute(opcode.abs_addr() as usize, val);
+                        mmu.write_absolute(opcode.abs_addr(), val);
 
                         self.offset_pc(3);
                     }
 
                     Op::SBCAbsolute => {
-                        let mut val = interconnect.read_absolute(opcode.abs_addr());
+                        let mut val = mmu.read_absolute(opcode.abs_addr());
                         let a = self.a;
                         val = self.subtract_with_carry(a, val);
 
@@ -1962,7 +1961,7 @@ impl NESCpu {
                     }
 
                     Op::SBCIndirectY => {
-                        let mut val = interconnect.read_indexed_indirect_y(opcode.imm1() as usize, self.y as usize);
+                        let mut val = mmu.read_indexed_indirect_y(opcode.imm1(), self.y);
                         let a = self.a;
                         val = self.subtract_with_carry(a, val);
 
@@ -1972,7 +1971,7 @@ impl NESCpu {
                     }
 
                     Op::SBCZeroPageX => {
-                        let mut val = interconnect.read_zero_paged_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let mut val = mmu.read_zero_paged_indexed_x(opcode.imm1(), self.x);
                         let a = self.a;
 
                         let val = self.subtract_with_carry(a, val);
@@ -1983,10 +1982,10 @@ impl NESCpu {
                     }
 
                     Op::INCZeroPageX => {
-                        let mut val = interconnect.read_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize);
+                        let mut val = mmu.read_zero_paged_indexed_x(opcode.imm1(), self.x);
                         val = self.add_no_carry(val, 1);
 
-                        interconnect.write_zero_paged_indexed_x(opcode.imm1() as usize, self.x as usize, val);
+                        mmu.write_zero_paged_indexed_x(opcode.imm1(), self.x, val);
 
                         self.offset_pc(2);
                     }
@@ -1998,7 +1997,7 @@ impl NESCpu {
                     }
 
                     Op::SBCAbsoluteY => {
-                        let mut val = interconnect.read_absolute_indexed_y(opcode.abs_addr(), self.y as usize);
+                        let mut val = mmu.read_absolute_indexed_y(opcode.abs_addr(), self.y);
                         let a = self.a;
                         val = self.subtract_with_carry(a, val);
 
@@ -2008,7 +2007,7 @@ impl NESCpu {
                     }
 
                     Op::SBCAbsoluteX => {
-                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let mut val = mmu.read_absolute_indexed_x(opcode.abs_addr(), self.x);
                         let a = self.a;
                         val = self.subtract_with_carry(a, val);
 
@@ -2018,10 +2017,10 @@ impl NESCpu {
                     }
 
                     Op::INCAbsoluteX => {
-                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr() as usize, self.x as usize);
+                        let mut val = mmu.read_absolute_indexed_x(opcode.abs_addr(), self.x);
                         val = self.add_no_carry(val, 1);
 
-                        interconnect.write_absolute_indexed_x(opcode.abs_addr() as usize, self.x as usize, val);
+                        mmu.write_absolute_indexed_x(opcode.abs_addr(), self.x, val);
 
                         self.offset_pc(3);
                     }

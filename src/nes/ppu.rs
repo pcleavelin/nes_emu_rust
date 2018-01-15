@@ -1,25 +1,20 @@
-use minifb::{WindowOptions, Window, Key, Scale};
-
-use super::interconnect::Interconnect;
-use super::cart::*;
+use minifb::{Window, Key, Scale};
 
 pub const WIDTH: usize = 256;// + 256;// 341;
 pub const HEIGHT: usize = 240;// + 240;
 
 pub struct NESPpu {
-    ctrl: u8,
-    mask: u8,
-    status: u8,
-    oam_addr: u8,
-    oam_data: u8,
-    scroll_x: u8,
-    scroll_y: u8,
-    addr: u16,
-    data: u8,
-    oam_dma: u8,
-    oam: [u8; 0x100],
+    pub ctrl: u8,
+    pub mask: u8,
+    pub status: u8,
+    pub oam_addr: u8,
+    pub oam_data: u8,
+    pub scroll_x: u8,
+    pub scroll_y: u8,
+    pub addr: u16,
+    pub oam: [u8; 0x100],
 
-    last_reg_write: u8,
+    pub latch: u8,
 
     scroll_write: bool,
     addr_write: bool,
@@ -64,12 +59,9 @@ impl NESPpu {
             scroll_x: 0,
             scroll_y: 0,
             addr: 0,
-            data: 0,
-            //odd_frame: false,
-            oam_dma: 0,
             oam: [25; 0x100],
 
-            last_reg_write: 0,
+            latch: 0,
 
             scroll_write: false,
             addr_write: false,
@@ -140,13 +132,13 @@ impl NESPpu {
                 //actually contain the status register
                 
                 if self.cycles < 20 {
-                    self.status&0xE0 | self.last_reg_write&0x1F;
+                    self.status&0xE0 | self.latch&0x1F;
                     self.status &= 0x70;
 
                     return self.status;
                 }
                 
-                self.status&0xE0 | self.last_reg_write&0x1F
+                self.status&0xE0 | self.latch&0x1F
             }
             
             //Write-Only
@@ -171,7 +163,8 @@ impl NESPpu {
             
             //Read-Write
             7 => {
-                self.data
+                //self.data
+                0
             }
 
             //If the interconnect is programmed properly
@@ -188,7 +181,7 @@ impl NESPpu {
     //Info on what address maps to what
     //https://wiki.nesdev.com/w/index.php/PPU_registers
     pub fn write_ppu(&mut self, addr: usize, val: u8){
-        self.last_reg_write = val;
+        self.latch = val;
 
         match addr {
             //Write-Only
@@ -329,7 +322,7 @@ impl NESPpu {
         }
     }
 
-    pub fn blit(&mut self, pt0: &[u8], pt1: &[u8], nt0: &[u8], nt1: &[u8], ram: &[u8;0x10000], delta_ram: &mut [bool;0x10000], _cart: &NESCart, window: &mut Window) {
+    pub fn blit(&mut self, pt0: &[u8], pt1: &[u8], nt0: &[u8], nt1: &[u8], ram: &[u8;0x10000], delta_ram: &mut [bool;0x10000], window: &mut Window) {
         if self.mask&0x8 >= 0 {
             let pt = if self.ctrl&0x10 == 0 {
                 pt1
@@ -583,8 +576,10 @@ impl NESPpu {
         }
     }
 
-    pub fn do_cycle(&mut self, cycle: u32) {
-        self.cycles = cycle;
+    pub fn do_cycle(&mut self, cycles: u32) -> bool {
+        self.cycles += cycles;
+
+        //TODO: do cycle exact ppu rendering
 
         /*
         match self.cycles {
@@ -606,6 +601,6 @@ impl NESPpu {
             }
         }*/
 
-        
+        return false;        
     }
 }

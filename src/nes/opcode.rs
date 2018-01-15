@@ -182,8 +182,8 @@ impl Opcode {
         ((self.instruction >> 16) & 0xFF) as u8
     }
 
-    pub fn abs_addr(&self) -> usize {
-        (self.instruction >> 8) as usize
+    pub fn abs_addr(&self) -> u16 {
+        (self.instruction >> 8) as u16
     }
 
     pub fn get_num_cycles(&self) -> u32 {
