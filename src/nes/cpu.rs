@@ -411,30 +411,7 @@ impl NESCpu {
     }
 
     pub fn subtract_with_carry(&mut self, lhs: u8, rhs: u8) -> u8 {
-        let val = (lhs as u16).wrapping_sub((rhs as u16)).wrapping_sub(!self.p.carry as u16);
-
-        if val&0xFF == 0 {
-            self.p.set_zero(true);
-        } else {
-            self.p.set_zero(false);
-        }
-        if (val&0x80) > 0 {
-            self.p.set_negative(true);
-        } else {
-            self.p.set_negative(false);
-        }
-        if (lhs^((val&0xFF) as u8))&(rhs^((val&0xFF) as u8))&0x80 > 0 {
-            self.p.set_overflow(true);
-        } else {
-            self.p.set_overflow(false);
-        }
-        if val&0x100 > 0 {
-            self.p.set_carry(true);
-        } else {
-            self.p.set_carry(false);
-        }
-
-        (val&0xFF) as u8
+        return self.add_with_carry(lhs, rhs^0xFF);
     }
 
     pub fn subtract(&mut self, lhs: u8, rhs: u8) -> u8 {
@@ -543,14 +520,171 @@ impl NESCpu {
         self.pc = (addr_hi << 8) | addr_lo;
     }
 
+    fn get_op_cycles(&self, op: &Op) -> u32 {
+        match *op {
+            Op::BRKImmediate   => 7,
+            Op::ORAIndirectX   => 6,
+            Op::ORAZeroPage    => 3,
+            Op::ASLZeroPage    => 5,
+            Op::PHPImplied     => 3,
+            Op::ORAImmediate   => 2,
+            Op::ASLAccumulator => 2,
+            Op::ORAAbsolute    => 4,
+            Op::ASLAbsolute    => 6,
+            Op::BPLRelative    => 2,
+            Op::ORAIndirectY   => 5,
+            Op::ORAZeroPageX   => 4,
+            Op::ASLZeroPageX   => 6,
+            Op::CLCImplied     => 2,
+            Op::ORAAbsoluteY   => 4,
+            Op::ORAAbsoluteX   => 4,
+            Op::ASLAbsoluteX   => 7,
+            Op::JSRAbsolute    => 6,
+            Op::ANDIndirectX   => 6,
+            Op::BITZeroPage    => 3,
+            Op::ANDZeroPage    => 3,
+            Op::ROLZeroPage    => 5,
+            Op::PLPImplied     => 4,
+            Op::ANDImmediate   => 2,
+            Op::ROLAccumulator => 2,
+            Op::BITAbsolute    => 4,
+            Op::ANDAbsolute    => 4,
+            Op::ROLAbsolute    => 6,
+            Op::BMIRelative    => 2,
+            Op::ANDIndirectY   => 5,
+            Op::ANDZeroPageX   => 4,
+            Op::ROLZeroPageX   => 6,
+            Op::SECImplied     => 2,
+            Op::ANDAbsoluteY   => 4,
+            Op::ANDAbsoluteX   => 4,
+            Op::ROLAbsoluteX   => 7,
+            Op::RTIImplied     => 6,
+            Op::EORIndirectX   => 6,
+            Op::EORZeroPage    => 3,
+            Op::LSRZeroPage    => 5,
+            Op::PHAImplied     => 3,
+            Op::EORImmediate   => 2,
+            Op::LSRAccumulator => 2,
+            Op::JMPAbsolute    => 3,
+            Op::EORAbsolute    => 4,
+            Op::LSRAbsolute    => 6,
+            Op::BVCRelative    => 2,
+            Op::EORIndirectY   => 5,
+            Op::EORZeroPageX   => 4,
+            Op::LSRZeroPageX   => 6,
+            Op::CLIImplied     => 2,
+            Op::EORAbsoluteY   => 4,
+            Op::EORAbsoluteX   => 4,
+            Op::LSRAbsoluteX   => 7,
+            Op::RTSImplied     => 6,
+            Op::ADCIndirectX   => 6,
+            Op::ADCZeroPage    => 3,
+            Op::RORZeroPage    => 5,
+            Op::PLAImplied     => 4,
+            Op::ADCImmediate   => 2,
+            Op::RORAccumulator => 2,
+            Op::JMPAbsIndirect => 5,
+            Op::ADCAbsolute    => 4,
+            Op::RORAbsolute    => 6,
+            Op::BVSRelative    => 2,
+            Op::ADCIndirectY   => 5,
+            Op::ADCZeroPageX   => 4,
+            Op::RORZeroPageX   => 6,
+            Op::SEIImplied     => 2,
+            Op::ADCAbsoluteY   => 4,
+            Op::ADCAbsoluteX   => 4,
+            Op::RORAbsoluteX   => 7,
+            Op::STAIndirectX   => 6,
+            Op::STYZeroPage    => 3,
+            Op::STAZeroPage    => 3,
+            Op::STXZeroPage    => 3,
+            Op::DEYImplied     => 2,
+            Op::TXAImplied     => 2,
+            Op::STYAbsolute    => 4,
+            Op::STXAbsolute    => 4,
+            Op::STAAbsolute    => 4,
+            Op::BCCRelative    => 2,
+            Op::STAIndirectY   => 6,
+            Op::STYZeroPageX   => 4,
+            Op::STAZeroPageX   => 4,
+            Op::STXZeroPageY   => 4,
+            Op::TYAImplied     => 2,
+            Op::STAAbsoluteY   => 5,
+            Op::TXSImplied     => 2,
+            Op::STAAbsoluteX   => 5,
+            Op::LDYImmediate   => 2,
+            Op::LDAIndirectX   => 6,
+            Op::LDXImmediate   => 2,
+            Op::LDYZeroPage    => 3,
+            Op::LDAZeroPage    => 3,
+            Op::LDXZeroPage    => 3,
+            Op::TAYImplied     => 2,
+            Op::LDAImmediate   => 2,
+            Op::TAXImplied     => 2,
+            Op::LDAAbsolute    => 4,
+            Op::LDYAbsolute    => 4,
+            Op::LDXAbsolute    => 4,
+            Op::BCSRelative    => 2,
+            Op::LDAIndirectY   => 5,
+            Op::LDYZeroPageX   => 4,
+            Op::LDAZeroPageX   => 4,
+            Op::LDXZeroPageY   => 4,
+            Op::CLVImplied     => 2,
+            Op::LDAAbsoluteY   => 4,
+            Op::TSXImplied     => 2,
+            Op::LDYAbsoluteX   => 4,
+            Op::LDAAbsoluteX   => 4,
+            Op::LDXAbsoluteY   => 4,
+            Op::CPYImmediate   => 2,
+            Op::CMPIndirectX   => 6,
+            Op::CPYZeroPage    => 3,
+            Op::CMPZeroPage    => 3,
+            Op::DECZeroPage    => 5,
+            Op::INYImplied     => 2,
+            Op::CMPImmediate   => 2,
+            Op::DEXImplied     => 2,
+            Op::CPYAbsolute    => 4,
+            Op::CMPAbsolute    => 4,
+            Op::DECAbsolute    => 4,
+            Op::BNERelative    => 2,
+            Op::CMPIndirectY   => 5,
+            Op::CMPZeroPageX   => 4,
+            Op::DECZeroPageX   => 6,
+            Op::CLDImplied     => 2,
+            Op::CMPAbsoluteY   => 4,
+            Op::CMPAbsoluteX   => 4,
+            Op::DECAbsoluteX   => 7,
+            Op::CPXImmediate   => 2,
+            Op::SBCIndirectX   => 6,
+            Op::CPXZeroPage    => 3,
+            Op::SBCZeroPage    => 3,
+            Op::INCZeroPage    => 5,
+            Op::INXImplied     => 2,
+            Op::SBCImmediate   => 2,
+            Op::CPXAbsolute    => 4,
+            Op::INCAbsolute    => 6,
+            Op::SBCAbsolute    => 4,
+            Op::BEQRelative    => 2,
+            Op::SBCIndirectY   => 5,
+            Op::SBCZeroPageX   => 4,
+            Op::INCZeroPageX   => 6,
+            Op::SEDImplied     => 2,
+            Op::SBCAbsoluteY   => 2,
+            Op::SBCAbsoluteX   => 4,
+            Op::INCAbsoluteX   => 7,
+            Op::NOPImplied     => 2,
+        }
+    }
+
     //6502 opcode info http://obelisk.me.uk/6502/reference.html
-    pub fn do_instruction(&mut self, interconnect: &mut Interconnect) -> bool {
+    pub fn do_instruction(&mut self, interconnect: &mut Interconnect) -> (bool, u32) {
         //Read 3 bytes (1st is opcode, 2nd is first operand (if any), 3rd is second operand (if any))
         let op = interconnect.read_mem(self.pc as usize) as u32;
         let imm1 = (interconnect.read_mem((self.pc.wrapping_add(1)) as usize) as u32) << 8;
         let imm2 = (interconnect.read_mem((self.pc.wrapping_add(2)) as usize) as u32) << 16;
 
         let opcode = Opcode::new(op | imm1 | imm2);
+        let mut delta_cycles = 0;
 
         println!("pc: 0x{:04X}", self.pc);
 
@@ -559,7 +693,8 @@ impl NESCpu {
         match Op::from_i32(opcode.op() as i32) {
             Some(op) => {
                 print!("{:?} ", op);
-                
+                delta_cycles = self.get_op_cycles(&op);
+
                 match op {
 
                     //IMPLIED
@@ -645,7 +780,7 @@ impl NESCpu {
                         let val = interconnect.read_absolute(opcode.abs_addr() as usize);
                         let a = self.a;
 
-                        let _ = self.or(a, val);
+                        self.a = self.or(a, val);
 
                         self.offset_pc(3);
                     }
@@ -730,6 +865,16 @@ impl NESCpu {
                         self.offset_pc(3);
                     }
 
+                    Op::ASLAbsoluteX => {
+                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr() as usize, self.x as usize);
+
+                        val = self.shift_left(val);
+
+                        interconnect.write_absolute_indexed_x(opcode.abs_addr(), self.x as usize, val);
+
+                        self.offset_pc(3);
+                    }
+
                     //Pushes return point onto stack (pc + 3), then sets pc to absolute address
                     Op::JSRAbsolute => {
                         print!("Jumping from 0x{:04X} --- ", self.pc);
@@ -771,7 +916,7 @@ impl NESCpu {
                         let val = interconnect.read_absolute(opcode.abs_addr() as usize);
                         let a = self.a;
 
-                        let _ = self.and(a, val);
+                        self.a = self.and(a, val);
 
                         self.offset_pc(3);
                     }
@@ -912,6 +1057,16 @@ impl NESCpu {
                         self.offset_pc(1);
                     }
 
+                    Op::ROLAbsoluteX => {
+                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr(), self.x as usize);
+                        
+                        val = self.rol(val);
+
+                        interconnect.write_absolute_indexed_x(opcode.abs_addr(), self.x as usize, val);
+
+                        self.offset_pc(3);
+                    }
+
                     Op::RTIImplied => {
                         let p = self.pop_stack(interconnect) as u8;
                         let lo = self.pop_stack(interconnect) as u16;
@@ -980,7 +1135,7 @@ impl NESCpu {
                         let val = interconnect.read_absolute(opcode.abs_addr() as usize);
                         let a = self.a;
 
-                        let _ = self.eor(a, val);
+                        self.a = self.eor(a, val);
 
                         self.offset_pc(3);
                     }
@@ -1035,6 +1190,12 @@ impl NESCpu {
                         self.offset_pc(2);
                     }
 
+                    Op::CLIImplied => {
+                        self.p.set_irq_disable(false);
+
+                        self.offset_pc(1);
+                    }
+
                     Op::EORAbsoluteY => {
                         let mut val = interconnect.read_absolute_indexed_y(opcode.abs_addr(), self.y as usize);
                         let a = self.a;
@@ -1042,6 +1203,27 @@ impl NESCpu {
                         let val = self.eor(a, val);
 
                         self.a = val;
+
+                        self.offset_pc(3);
+                    }
+
+                    Op::EORAbsoluteX => {
+                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let a = self.a;
+
+                        let val = self.eor(a, val);
+
+                        self.a = val;
+
+                        self.offset_pc(3);
+                    }
+
+                    Op::LSRAbsoluteX => {
+                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr() as usize, self.x as usize);
+
+                        val = self.shift_right(val);
+
+                        interconnect.write_absolute_indexed_x(opcode.abs_addr(), self.x as usize, val);
 
                         self.offset_pc(3);
                     }
@@ -1825,6 +2007,16 @@ impl NESCpu {
                         self.offset_pc(3);
                     }
 
+                    Op::SBCAbsoluteX => {
+                        let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr(), self.x as usize);
+                        let a = self.a;
+                        val = self.subtract_with_carry(a, val);
+
+                        self.a = val;
+
+                        self.offset_pc(3);
+                    }
+
                     Op::INCAbsoluteX => {
                         let mut val = interconnect.read_absolute_indexed_x(opcode.abs_addr() as usize, self.x as usize);
                         val = self.add_no_carry(val, 1);
@@ -1841,23 +2033,21 @@ impl NESCpu {
                     _ => {
                         println!("{:?}", opcode);
                         println!("unimplemented opcode");
-                        return false
+                        return (false,0)
                     }
                 }
             }
             
             None => {
                 println!("unknown {:?}", opcode);
-                return false
+                return (false,0)
             }
         }
         
         println!("{:?}", opcode);
 
-        println!("a: 0x{:02X}\nx: 0x{:02X}\ny: 0x{:02X}\ns: 0x{:02X}\n{:?}\n\n", 
-                    self.a, self.x, self.y,
-                    self.s, self.p);
+        println!("a: 0x{:02X}\nx: 0x{:02X}\ny: 0x{:02X}\ns: 0x{:02X}\n{:?}\n\n", self.a, self.x, self.y, self.s, self.p);
 
-        true
+        return (true,delta_cycles);
     }
 }

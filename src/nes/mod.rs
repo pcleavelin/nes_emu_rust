@@ -14,6 +14,9 @@ use self::controller_scanner::*;
 use self::io::NESIoButton;
 
 use std;
+use std::time::{Instant, Duration};
+use std::ops::Sub;
+use std::thread;
 use libusb;
 use minifb::{WindowOptions, Window, Key, Scale};
 
@@ -21,6 +24,11 @@ pub struct NES {
     cpu: NESCpu,
     interconnect: Interconnect,
     window: Window,
+
+    last_frame_instant: Instant,
+
+    current_cycle: u32,
+    elapsed_cycles: u32,
 }
 
 impl NES {
@@ -34,6 +42,10 @@ impl NES {
                 resize: false,
                 scale: Scale::X4,
             }).expect("Failed to create window"),
+            last_frame_instant: Instant::now(),
+
+            current_cycle: 0,
+            elapsed_cycles: 0,
         }
     }
 
@@ -99,7 +111,47 @@ impl NES {
         let mut do_int = true;
         while self.window.is_open() && !self.window.is_key_down(Key::Escape) {
 
-            if self.interconnect.ppu().cycles() == 241 {
+            
+            //println!("{}", self.current_cycle);
+            if self.interconnect.ppu().cycles() == 241 && self.interconnect.ppu().ctrl()&0x80 > 0 {
+                //println!("NMI");
+                //self.cpu.do_nmi(&mut self.interconnect);
+            }
+
+            let (success, delta_cycles) = self.cpu.do_instruction(&mut self.interconnect);
+            if !success {
+                //self.hard_restart();
+                //self.cpu.offset_pc(1);
+                break;
+            }
+
+            self.elapsed_cycles += delta_cycles;
+            self.current_cycle += delta_cycles;
+
+            if self.current_cycle >= 241 && self.current_cycle-delta_cycles < 241 {
+                self.interconnect.ppu().is_vblank(true);
+
+                if self.interconnect.ppu().ctrl()&0x80 > 0 {
+                    self.cpu.do_nmi(&mut self.interconnect);
+                }
+
+                //self.interconnect.render(&mut self.window);
+            }
+            else if self.current_cycle >= 340 {
+                self.interconnect.ppu().is_vblank(false);
+            }
+
+            self.interconnect.update(self.current_cycle);
+            self.current_cycle %= 340;
+
+            if self.elapsed_cycles >= 1000 {
+                let t = Duration::new(0,(self.elapsed_cycles*559));
+                //println!("{:?}", t);
+                //thread::sleep(t);
+                self.elapsed_cycles = 0;
+            }
+
+            if self.last_frame_instant.elapsed() >= Duration::from_millis(1) {
                 match listener.read() {
                     Ok(Some(controller)) => {
                         self.interconnect.io().set_controller_button(NESIoButton::A, controller.a);
@@ -110,7 +162,6 @@ impl NES {
                         self.interconnect.io().set_controller_button(NESIoButton::Down, controller.down);
                         self.interconnect.io().set_controller_button(NESIoButton::Left, controller.left);
                         self.interconnect.io().set_controller_button(NESIoButton::Right, controller.right);
-
                         /*println!("A: {}", controller.a);
                         println!("B: {}", controller.b);
 
@@ -124,24 +175,19 @@ impl NES {
                     }
                     _ => {}
                 }
-            }
-            
-            if self.cpu.do_instruction(&mut self.interconnect) == false {
-                //self.hard_restart();
-                //self.cpu.offset_pc(1);
-                break;
-            }
 
-            self.interconnect.update(&mut self.window);
-
-            if self.interconnect.ppu().cycles() == 241 && self.interconnect.ppu().ctrl()&0x80 > 0 {
-                self.cpu.do_nmi(&mut self.interconnect);
+                self.interconnect.render(&mut self.window);
+                self.interconnect.ppu().update_window(&mut self.window);
+                self.last_frame_instant = Instant::now();
+                //self.window.update();
             }
 
             if do_int {
                 do_int = false;
                 //self.cpu.do_nmi(&mut self.interconnect);
             }
+
+            //self.window.update();
         }
     }
 }

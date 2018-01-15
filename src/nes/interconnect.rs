@@ -26,7 +26,7 @@ impl Interconnect {
     pub fn new() -> Interconnect {
 
         Interconnect {
-            internal_ram: [0x0u8;0x0800],
+            internal_ram: [0x25u8;0x0800],
             delta_ram: [true;0x10000],
             
             ppu: NESPpu::new(),
@@ -42,8 +42,11 @@ impl Interconnect {
 
         self.cart.print_header();
 
+        let mirror = self.cart.get_mirroring();
+        self.ppu.set_mirroring(mirror);
+
         for i in 0u16..0x800u16 {
-            //self.internal_ram[i as usize] = ((i)%256) as u8;
+            self.internal_ram[i as usize] = ((i)%256) as u8;
         }
     }
 
@@ -75,19 +78,23 @@ impl Interconnect {
         }
     }
 
-    pub fn update(&mut self, window: &mut Window) {
+    pub fn update(&mut self, cycle: u32) {
+        self.ppu.do_cycle(cycle);
+    }
+
+    pub fn render(&mut self, window: &mut Window) {
         let mut ram = [0u8;0x10000];
-        /*for i in 0..0x10000 {
+        /*for i in 0..0x4000 {
             ram[i] = self.read_mem(i);
         }*/
 
-        let mut pt0 = self.cart.get_pattern_table(0);
-        let mut pt1 = self.cart.get_pattern_table(1);
+        let pt0 = self.cart.get_pattern_table(0);
+        let pt1 = self.cart.get_pattern_table(1);
 
-        let mut nt0 = &self.internal_ram[(0*0x400)..((0+1)*0x400)];
-        let mut nt1 = &self.internal_ram[(1*0x400)..((1+1)*0x400)];
+        let nt0 = &self.internal_ram[(0*0x400)..((0+1)*0x400)];
+        let nt1 = &self.internal_ram[(1*0x400)..((1+1)*0x400)];
 
-        self.ppu.do_cycle(pt0, pt1, nt0, nt1, &ram, &mut self.delta_ram, &self.cart, window);
+        self.ppu.blit(pt0, pt1, nt0, nt1, &ram, &mut self.delta_ram, &self.cart, window);
     }
 
     //Reading Memory
@@ -188,27 +195,32 @@ impl Interconnect {
         match fixed_addr {
             0x0000...0x1FFF => {
                 self.internal_ram[fixed_addr % 0x0800] = val;
-                self.delta_ram[fixed_addr] = true;
+                /*self.delta_ram[fixed_addr] = true;
                 self.delta_ram[fixed_addr + 0x800] = true;
                 self.delta_ram[fixed_addr + 0x800*2] = true;
-                self.delta_ram[fixed_addr + 0x800*3] = true;
+                self.delta_ram[fixed_addr + 0x800*3] = true;*/
             }
 
             0x2000...0x3FFF => {
                 //TODO: write to ppu registers
                 //println!("Unimplemented Write to PPU registers!");
-                self.ppu().write_ppu((fixed_addr - 0x2000) % 8, val);
+
+                self.ppu.write_ppu((fixed_addr - 0x2000) % 8, val);
 
                 self.delta_ram[fixed_addr] = true;
             }
 
-            0x4016 => {
-                self.io.write(fixed_addr, val);
-            }
-
             0x4000...0x4017 => {
                 //TODO: write to apu and i/o registers
-                println!("Unimplemented Write to I/O registers! 0x{:04X}", fixed_addr);
+                //println!("Unimplemented Write to I/O registers! 0x{:04X}", fixed_addr);
+                
+                if fixed_addr == 0x4014 {
+                    self.ppu.dma(&self.internal_ram[((val as usize) << 8)..(0xFF + ((val as usize) << 8) + 1)]);
+                }
+
+                if fixed_addr == 0x4016 {
+                    self.io.write(fixed_addr, val);
+                }
 
                 self.delta_ram[fixed_addr] = true;
             }

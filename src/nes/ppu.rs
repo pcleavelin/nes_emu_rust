@@ -3,7 +3,7 @@ use minifb::{WindowOptions, Window, Key, Scale};
 use super::interconnect::Interconnect;
 use super::cart::*;
 
-pub const WIDTH: usize = 256 + 256;// 341;
+pub const WIDTH: usize = 256;// + 256;// 341;
 pub const HEIGHT: usize = 240;// + 240;
 
 pub struct NESPpu {
@@ -17,13 +17,18 @@ pub struct NESPpu {
     addr: u16,
     data: u8,
     oam_dma: u8,
-    oam: [u8; 0xFF],
+    oam: [u8; 0x100],
+
+    last_reg_write: u8,
 
     scroll_write: bool,
     addr_write: bool,
+    vertical_mirror: bool,
 
     nametable1: [u8; 0x400],
     nametable2: [u8; 0x400],
+    nametable3: [u8; 0x400],
+    nametable4: [u8; 0x400],
     patterntable1: [u8; 0x1000],
     patterntable2: [u8; 0x1000],
 
@@ -32,11 +37,16 @@ pub struct NESPpu {
     bg_palette2: [u8;3],
     bg_palette3: [u8;3],
 
+    sprite_palette0: [u8;3],
+    sprite_palette1: [u8;3],
+    sprite_palette2: [u8;3],
+    sprite_palette3: [u8;3],
+
     palette: [u32;0x40],
 
     vram: Vec<u32>,
 
-    cycles: i32,
+    cycles: u32,
 }
 
 impl NESPpu {
@@ -57,13 +67,18 @@ impl NESPpu {
             data: 0,
             //odd_frame: false,
             oam_dma: 0,
-            oam: [0; 0xFF],
+            oam: [25; 0x100],
+
+            last_reg_write: 0,
 
             scroll_write: false,
             addr_write: false,
+            vertical_mirror: false,
 
             nametable1: [0; 0x400],
             nametable2: [0; 0x400],
+            nametable3: [0; 0x400],
+            nametable4: [0; 0x400],
             patterntable1: [0; 0x1000],
             patterntable2: [0; 0x1000],
 
@@ -71,6 +86,11 @@ impl NESPpu {
             bg_palette1: [0u8;3],
             bg_palette2: [0u8;3],
             bg_palette3: [0u8;3],
+
+            sprite_palette0: [0u8;3],
+            sprite_palette1: [0u8;3],
+            sprite_palette2: [0u8;3],
+            sprite_palette3: [0u8;3],
 
             palette: [0x6D6D6D,0x002491,0x0000DA,0x6D48DA,0x91006D,0xB6006D,0xB62400,0x914800,0x6D4800,0x244800,0x006D24,0x009100,0x004848,0x000000,0x000000,0x000000,
                       0xB6B6B6,0x006DDA,0x0048FF,0x9100FF,0xB600FF,0xFF0091,0xFF0000,0xDA6D00,0x916D00,0x249100,0x009100,0x00B66D,0x009191,0x000000,0x000000,0x000000,
@@ -83,11 +103,15 @@ impl NESPpu {
         }
     }
 
+    pub fn set_mirroring(&mut self, vertical_mirror: bool) {
+        self.vertical_mirror = vertical_mirror;
+    }
+
     pub fn ctrl(&self) -> u8 {
         self.ctrl
     }
 
-    pub fn cycles(&self) -> i32 {
+    pub fn cycles(&self) -> u32 {
         self.cycles
     }
 
@@ -115,14 +139,14 @@ impl NESPpu {
                 //This one is interesting, since only the top 3 bits
                 //actually contain the status register
                 
-                if self.cycles == 0 {
-                    let status = self.status&0xE0 | self.scroll_x&0x1F;
-                    self.status &= 0x7F;
+                if self.cycles < 20 {
+                    self.status&0xE0 | self.last_reg_write&0x1F;
+                    self.status &= 0x70;
 
-                    return status;
+                    return self.status;
                 }
                 
-                self.status&0xE0 | self.scroll_x&0x1F
+                self.status&0xE0 | self.last_reg_write&0x1F
             }
             
             //Write-Only
@@ -164,6 +188,8 @@ impl NESPpu {
     //Info on what address maps to what
     //https://wiki.nesdev.com/w/index.php/PPU_registers
     pub fn write_ppu(&mut self, addr: usize, val: u8){
+        self.last_reg_write = val;
+
         match addr {
             //Write-Only
             0 => {
@@ -209,7 +235,7 @@ impl NESPpu {
 
                     self.addr %= 0x4000;
                 } else {
-                    self.addr |= val as u16;
+                    self.addr = (self.addr&0xFF00) | val as u16;
                     //panic!("addr: 0x{:04X}", self.addr);
                 }
 
@@ -235,11 +261,11 @@ impl NESPpu {
                     }
 
                     0x2800...0x2BFF => {
-                        self.nametable1[(self.addr - 0x2800) as usize] = val;
+                        self.nametable3[(self.addr - 0x2800) as usize] = val;
                     }
 
                     0x2C00...0x2FFF => {
-                        self.nametable2[(self.addr - 0x2C00) as usize] = val;
+                        self.nametable4[(self.addr - 0x2C00) as usize] = val;
                     }
 
                     0x3F00 => {
@@ -257,6 +283,19 @@ impl NESPpu {
                     }
                     0x3F0D...0x3F0F => {
                         self.bg_palette3[(self.addr - 0x3F0D) as usize] = val;
+                    }
+
+                    0x3F11...0x3F13 => {
+                        self.sprite_palette0[(self.addr - 0x3F11) as usize] = val;
+                    }
+                    0x3F15...0x3F17 => {
+                        self.sprite_palette1[(self.addr - 0x3F15) as usize] = val;
+                    }
+                    0x3F19...0x3F1B => {
+                        self.sprite_palette2[(self.addr - 0x3F19) as usize] = val;
+                    }
+                    0x3F1D...0x3F1F => {
+                        self.sprite_palette3[(self.addr - 0x3F1D) as usize] = val;
                     }
 
                     _ => {
@@ -283,18 +322,17 @@ impl NESPpu {
         }
     }
 
-    pub fn do_cycle(&mut self, pt0: &[u8], pt1: &[u8], nt0: &[u8], nt1: &[u8], ram: &[u8;0x10000], delta_ram: &mut [bool;0x10000], _cart: &NESCart, window: &mut Window) {
+    pub fn dma(&mut self, data: &[u8]) {
+        //self.oam.copy_from_slice(data);
+        for i in 0..0x100 {
+            self.oam[(self.oam_addr.wrapping_add(i as u8)) as usize] = data[i];
+        }
+    }
 
+    pub fn blit(&mut self, pt0: &[u8], pt1: &[u8], nt0: &[u8], nt1: &[u8], ram: &[u8;0x10000], delta_ram: &mut [bool;0x10000], _cart: &NESCart, window: &mut Window) {
         if self.mask&0x8 >= 0 {
-            let nt = if self.ctrl&0x3 == 0 || self.ctrl&0x3 == 2 {
-                //nt0
-                &self.nametable1
-            } else {
-                //nt1
-                &self.nametable2
-            };
             let pt = if self.ctrl&0x10 == 0 {
-                pt0
+                pt1
                 //&self.patterntable1
             } else {
                 pt1
@@ -303,17 +341,51 @@ impl NESPpu {
 
             for y in 0..HEIGHT {
                 let mut x = 0;
+                let nt_y = ((y + self.scroll_y as usize))%(HEIGHT);
+
                 loop {
-                    if x >= WIDTH/2 {
+                    if x >= WIDTH {
                         break;
                     }
 
-                    //self.vram[x + (y*WIDTH)] = (((x ^ y) & 0xff) * 1) as u32;
+                    let mut nt_x = ((x + self.scroll_x as usize))%(WIDTH);
 
-                    let nt_x = ((x).wrapping_add(self.scroll_x as usize *8) as usize)%(WIDTH/2);
-                    let nt_y = ((y).wrapping_add(self.scroll_y as usize *8) as usize)%(HEIGHT);
+                    let nt = match self.ctrl&0x3 {
+                        0 => {
+                            &self.nametable1
+                        }
+
+                        1 => {
+                            if self.vertical_mirror {
+                                &self.nametable2
+                            } else {
+                                &self.nametable1
+                            }
+                        }
+
+                        2 => {
+                            if self.vertical_mirror {
+                                &self.nametable1
+                            } else {
+                                &self.nametable3
+                            }
+                        }
+
+                        3 => {
+                            if self.vertical_mirror {
+                                &self.nametable2
+                            } else {
+                                &self.nametable4
+                            }
+                        }
+                        
+                        _ => {
+                            &self.nametable1
+                        }
+                    };
 
                     let attrib = nt[(nt_x/32) + (nt_y/32)*8 + 0x3C0];
+
                     let palette = match (nt_x/16,nt_y/16) {
                         (0,0) => {
                             attrib&0x3
@@ -332,9 +404,6 @@ impl NESPpu {
                             attrib&0x3
                         }
                     };
-                    //let topright_palette = (attrib&0xC) >> 2;
-                    //let bottomleft_palette = (attrib&0x30) >> 4;
-                    //let bottomright_palette = (attrib&0xC0) >> 6;
 
                     let bg_pal = match palette {
                         0 => {
@@ -360,20 +429,24 @@ impl NESPpu {
                     let sliver2 = pt[pattern_addr*16 + (nt_y%8) + 8];// >> scroll_x;
 
                     for i in 0..8 {
-                        let color1 = (sliver1 >> (7-i)) & 0x1;
-                        let color2 = (sliver2 >> (7-i)) & 0x1;
+                        let color = (sliver1 >> (7-i)) & 0x1 | ((sliver2 >> (7-i)) & 0x1) << 1;
 
-                        if color1 > 0 && color2 > 0 {
-                            self.vram[x+i + (y*WIDTH)] = self.palette[bg_pal[2] as usize];
-                        }
-                        else if color1 > 0 {
-                            self.vram[x+i + (y*WIDTH)] = self.palette[bg_pal[0] as usize];
-                        }
-                        else if color2 > 0 {
-                            self.vram[x+i + (y*WIDTH)] = self.palette[bg_pal[1] as usize];
-                        }
-                        else {
-                            self.vram[x+i + (y*WIDTH)] = 0;
+                        match color {
+                            0 => {
+                                self.vram[x+i + (y*WIDTH)] = 1;
+                            }
+                            1 => {
+                                self.vram[x+i + (y*WIDTH)] = self.palette[bg_pal[0] as usize];
+                            }
+                            2 => {
+                                self.vram[x+i + (y*WIDTH)] = self.palette[bg_pal[1] as usize];
+                            }
+                            3 => {
+                                self.vram[x+i + (y*WIDTH)] = self.palette[bg_pal[2] as usize];
+                            }
+                            _ => {
+                                self.vram[x+i + (y*WIDTH)] = 1;
+                            }
                         }
                     }
 
@@ -381,70 +454,104 @@ impl NESPpu {
                 }
             }
 
-            for i in 0..32 {
-                let y = self.oam[i*4] as usize;
-                let tile = self.oam[i*4 + 1] as usize;
-                let attrib = self.oam[i*4 + 2];
-                let x = 5;//self.oam[i*4 + 3] as usize;
+            let pt = if self.ctrl&0x8 == 0 {
+                pt0
+                //&self.patterntable1
+            } else {
+                pt1
+                //&self.patterntable2
+            };
 
-                /*let attrib = nt[(nt_x/32) + (nt_y/32)*8 + 0x3C0];
-                let palette = match (nt_x/16,nt_y/16) {
-                    (0,0) => {
-                        attrib&0x3
-                    }
-                    (1,0) => {
-                        (attrib&0xC) >> 2
-                    }
-                    (0,1) => {
-                        (attrib&0x30) >> 4
-                    }
-                    (1,1) => {
-                        (attrib&0xC0) >> 6
-                    }
+            if self.mask&0x10 > 0 {
+                for i in 0..64 {
+                    let y = self.oam[i*4] as usize;
+                    let tile = self.oam[i*4 + 1] as usize;
+                    let attrib = self.oam[i*4 + 2];
+                    let x = self.oam[i*4 + 3] as usize;
 
-                    _ => {
-                        attrib&0x3
-                    }
-                };*/
+                    /*let attrib = nt[(nt_x/32) + (nt_y/32)*8 + 0x3C0];
+                    let palette = match (nt_x/16,nt_y/16) {
+                        (0,0) => {
+                            attrib&0x3
+                        }
+                        (1,0) => {
+                            (attrib&0xC) >> 2
+                        }
+                        (0,1) => {
+                            (attrib&0x30) >> 4
+                        }
+                        (1,1) => {
+                            (attrib&0xC0) >> 6
+                        }
 
-                let pattern_addr = tile >> 1;
+                        _ => {
+                            attrib&0x3
+                        }
+                    };*/
 
-                for tile_y in 0..8 {
-                    if tile_y+y >= HEIGHT {
-                        break;
-                    }
+                    let sprite_pal = match attrib&0x3 {
+                        0 => {
+                            self.sprite_palette0
+                        }
+                        1 => {
+                            self.sprite_palette1
+                        }
+                        2 => {
+                            self.sprite_palette2
+                        }
+                        3 => {
+                            self.sprite_palette3
+                        }
+                        _ => {
+                            self.sprite_palette0
+                        }
+                    };
 
-                    let sliver1 = pt[pattern_addr*16 + (tile_y%8)];
-                    let sliver2 = pt[pattern_addr*16 + (tile_y%8) + 8];
+                    let pattern_addr = tile;
 
-                    for tile_x in 0..8 {
-                        if tile_x+x >= WIDTH/2 {
+                    for tile_y in 0..8 {
+                        if tile_y+y >= HEIGHT {
                             break;
                         }
 
-                        let color1 = (sliver1 >> (7-tile_x)) & 0x1;
-                        let color2 = (sliver2 >> (7-tile_x)) & 0x1;
+                        let sliver1 = pt[pattern_addr*16 + (tile_y%8)];
+                        let sliver2 = pt[pattern_addr*16 + (tile_y%8) + 8];
 
-                        if color1 > 0 && color2 > 0 {
-                            self.vram[x+tile_x + ((y+tile_y)*WIDTH)] = 0xFF0000;//self.palette[bg_pal[2] as usize];
-                        }
-                        else if color1 > 0 {
-                            self.vram[x+tile_x + ((y+tile_y)*WIDTH)] = 0x00FF00;//self.palette[bg_pal[0] as usize];
-                        }
-                        else if color2 > 0 {
-                            self.vram[x+tile_x + ((y+tile_y)*WIDTH)] = 0x0000FF;//self.palette[bg_pal[1] as usize];
-                        }
-                        else {
-                            self.vram[x+tile_x + ((y+tile_y)*WIDTH)] = 0;
+                        for tile_x in 0..8 {
+                            if tile_x+x >= WIDTH {
+                                break;
+                            }
+
+                            let color1 = (sliver1 >> (7-tile_x)) & 0x1;
+                            let color2 = (sliver2 >> (7-tile_x)) & 0x1;
+
+                            if i == 0 && self.vram[x+tile_x + ((y+tile_y)*WIDTH)] != 1 && (color1 > 0 || color2 > 0) {
+                                self.status |= 0x40;
+                            }
+
+                            if color1 > 0 && color2 > 0 {
+                                self.vram[x+tile_x + ((y+tile_y)*WIDTH)] = self.palette[sprite_pal[2] as usize];
+                            }
+                            else if color1 > 0 {
+                                self.vram[x+tile_x + ((y+tile_y)*WIDTH)] = self.palette[sprite_pal[0] as usize];
+                            }
+                            else if color2 > 0 {
+                                self.vram[x+tile_x + ((y+tile_y)*WIDTH)] = self.palette[sprite_pal[1] as usize];
+                            }
+                            else {
+                                //self.vram[x+tile_x + ((y+tile_y)*WIDTH)] = 0;
+                            }
                         }
                     }
+
                 }
-
             }
+            
         }
+        //let _ = window.update_with_buffer(&self.vram);
 
-        if self.cycles%16 == 0 {
-            for y in 0..HEIGHT/4 {
+        //if self.cycles%16 == 0 {
+            /*for y in 0..HEIGHT/4 {
                 for x in 0..WIDTH/2 {
                     let val = (ram[(x) + (y*WIDTH/2)] as u32) << 8;
                     if delta_ram[x + (y*WIDTH/2)] || (self.vram[x+256 + (y*WIDTH)]&0xFF00 != val) {
@@ -459,35 +566,46 @@ impl NESPpu {
                         self.vram[x+256 + (y*WIDTH)] -= 9;
                     }
                 }
-            }
+            }*/
+        //}
+    }
+
+    pub fn update_window(&self, window: &mut Window) {
+        let _ = window.update_with_buffer(&self.vram);
+    }
+
+    pub fn is_vblank(&mut self, vblank: bool) {
+        if vblank {
+            self.status |= 0x80;
+            self.oam_addr = 0;
+        } else {
+            self.status &= 0x30;
         }
+    }
 
-          
+    pub fn do_cycle(&mut self, cycle: u32) {
+        self.cycles = cycle;
 
-        self.cycles += 1;
-
+        /*
         match self.cycles {
-            -1 => {
-                self.status &= 0x7F;
+            0 => {
+                self.status &= 0x70;
             }
 
-            241...339 => {
+            241 => {
                 self.status |= 0x80;
+                self.oam_addr = 0;
             }
 
             340 => {
-                self.cycles = -2;
+                self.cycles = 0;
             }
 
             _ => {
 
             }
-        }
+        }*/
 
-        if self.cycles == 241 {
-            window.update_with_buffer(&self.vram);
-        } else {
-            window.update();
-        }
+        
     }
 }

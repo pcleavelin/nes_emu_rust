@@ -37,11 +37,15 @@ impl NESCart {
     pub fn get_pattern_table(&self, num: usize) -> &[u8] {
         let addr = self.data[4] as usize * 0x4000 + 0x10 + (0x1000*num);
         if addr >= self.data.len() {
-            println!("error reading from cart pattern table: reached end of rom!");
+            //println!("error reading from cart pattern table: reached end of rom!");
             return &self.ram[(0x1000*num)..(0x1000*(num+1))];
             //return &self.data.as_slice()[((addr-0x4000)-0)..((addr-0x3000)-0)];
         }
         return &self.data.as_slice()[addr..(addr+0x1000)];
+    }
+
+    pub fn get_mirroring(&self) -> bool {
+        (self.data[6] & 0x1) > 0
     }
 
     pub fn read(&self, addr: usize) -> u8 {
