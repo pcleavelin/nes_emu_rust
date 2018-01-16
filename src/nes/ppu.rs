@@ -33,6 +33,11 @@ pub struct NESPpu {
     attrib_latch: u8,
     tile_low_latch: u8,
     tile_high_latch: u8,
+
+    scanline_sprite_y: [u8;8],
+    scanline_sprite_tile: [u8;8],
+    scanline_sprite_attrib: [u8;8],
+    scanline_sprite_x: [u8;8],
 }
 
 impl NESPpu {
@@ -68,10 +73,16 @@ impl NESPpu {
             cycles: 0,
             in_progress_cycles: 0,
             current_scanline: 0,
+
             nt_latch: 0,
             attrib_latch: 0,
             tile_low_latch: 0,
             tile_high_latch: 0,
+
+            scanline_sprite_y: [0u8;8],
+            scanline_sprite_tile: [0u8;8],
+            scanline_sprite_attrib: [0u8;8],
+            scanline_sprite_x: [0u8;8],
         }
     }
 
@@ -86,14 +97,14 @@ impl NESPpu {
         }
     }
 
-    pub fn blit_bg(&mut self, bg0: u8, bg1: u8, bg2: u8, window: &mut Window) {
-        if self.mask&0x8 >= 0 {
+    pub fn blit_bg(&mut self, bg0: u8, bg1: u8, bg2: u8) {
+        if self.mask&0x8 > 0 {
             for i in 0..8 {
                 let color = (self.tile_low_latch >> (7-i)) & 0x1 | ((self.tile_high_latch >> (7-i)) & 0x1) << 1;
 
                 match color {
                     0 => {
-                        self.vram[(self.cycles-1) as usize + i + (self.current_scanline as usize * WIDTH)] = 0;
+                        self.vram[(self.cycles-1) as usize + i + (self.current_scanline as usize * WIDTH)] = 1;
                     }
                     1 => {
                         self.vram[(self.cycles-1) as usize + i + (self.current_scanline as usize * WIDTH)] = self.palette[bg0 as usize];
@@ -108,133 +119,80 @@ impl NESPpu {
                     _ => {}
                 }
             }
-
-            /*let pt = if self.ctrl&0x8 == 0 {
-                pt0
-                //&self.patterntable1
-            } else {
-                pt1
-                //&self.patterntable2
-            };
-
-            if self.mask&0x10 > 0 {
-                for i in 0..64 {
-                    let y = self.oam[i*4] as usize;
-                    let tile = self.oam[i*4 + 1] as usize;
-                    let attrib = self.oam[i*4 + 2];
-                    let x = self.oam[i*4 + 3] as usize;
-
-                    /*let attrib = nt[(nt_x/32) + (nt_y/32)*8 + 0x3C0];
-                    let palette = match (nt_x/16,nt_y/16) {
-                        (0,0) => {
-                            attrib&0x3
-                        }
-                        (1,0) => {
-                            (attrib&0xC) >> 2
-                        }
-                        (0,1) => {
-                            (attrib&0x30) >> 4
-                        }
-                        (1,1) => {
-                            (attrib&0xC0) >> 6
-                        }
-
-                        _ => {
-                            attrib&0x3
-                        }
-                    };*/
-
-                    let sprite_pal = match attrib&0x3 {
-                        0 => {
-                            self.sprite_palette0
-                        }
-                        1 => {
-                            self.sprite_palette1
-                        }
-                        2 => {
-                            self.sprite_palette2
-                        }
-                        3 => {
-                            self.sprite_palette3
-                        }
-                        _ => {
-                            self.sprite_palette0
-                        }
-                    };
-
-                    let pattern_addr = tile;
-
-                    for tile_y in 0..8 {
-                        if tile_y+y >= HEIGHT {
-                            break;
-                        }
-
-                        let sliver1 = pt[pattern_addr*16 + (tile_y%8)];
-                        let sliver2 = pt[pattern_addr*16 + (tile_y%8) + 8];
-
-                        for tile_x in 0..8 {
-                            if tile_x+x >= WIDTH {
-                                break;
-                            }
-
-                            let color1 = (sliver1 >> (7-tile_x)) & 0x1;
-                            let color2 = (sliver2 >> (7-tile_x)) & 0x1;
-
-                            if i == 0 && self.vram[x+tile_x + ((y+tile_y)*WIDTH)] != 1 && (color1 > 0 || color2 > 0) {
-                                self.status |= 0x40;
-                            }
-
-                            if color1 > 0 && color2 > 0 {
-                                self.vram[x+tile_x + ((y+tile_y)*WIDTH)] = self.palette[sprite_pal[2] as usize];
-                            }
-                            else if color1 > 0 {
-                                self.vram[x+tile_x + ((y+tile_y)*WIDTH)] = self.palette[sprite_pal[0] as usize];
-                            }
-                            else if color2 > 0 {
-                                self.vram[x+tile_x + ((y+tile_y)*WIDTH)] = self.palette[sprite_pal[1] as usize];
-                            }
-                            else {
-                                //self.vram[x+tile_x + ((y+tile_y)*WIDTH)] = 0;
-                            }
-                        }
-                    }
-
-                }
-            }*/
-            
         }
-        //let _ = window.update_with_buffer(&self.vram);
+    }
 
-        //if self.cycles%16 == 0 {
-            /*for y in 0..HEIGHT/4 {
-                for x in 0..WIDTH/2 {
-                    let val = (ram[(x) + (y*WIDTH/2)] as u32) << 8;
-                    if delta_ram[x + (y*WIDTH/2)] || (self.vram[x+256 + (y*WIDTH)]&0xFF00 != val) {
-                        self.vram[x+256 + (y*WIDTH)] |= 0xFF;
-                        delta_ram[x + (y*WIDTH/2)] = false;
-                    }
+    pub fn blit_sprite(&mut self, sp0: u8, sp1: u8, sp2: u8, x: u8, flip_horizontal: bool) {
+        if self.mask&0x10 > 0 {
+            for i in 0..8 {
+                if (x as usize)+i >= WIDTH {
+                    break;
+                }
 
-                    self.vram[x+256 + (y*WIDTH)] &= 0x00FF;
-                    self.vram[x+256 + (y*WIDTH)] |= val;
+                let color = if !flip_horizontal {
+                    (self.tile_low_latch >> (7-i)) & 0x1 | ((self.tile_high_latch >> (7-i)) & 0x1) << 1
+                } else {
+                    ((self.tile_low_latch >> i) & 0x1) | (((self.tile_high_latch >> i) & 0x1)) << 1
+                };
 
-                    if self.vram[x+256 + (y*WIDTH)]&0xFF >= 9 {
-                        self.vram[x+256 + (y*WIDTH)] -= 9;
+                if self.cycles == 257 {
+                    if self.vram[x as usize + i + (self.current_scanline as usize * WIDTH)] != 1 && color > 0 {
+                        self.status |= 0x40;
+                        println!("Sprite 0 hit");
                     }
                 }
-            }*/
-        //}
+
+                match color {
+                    0 => {
+                        //self.vram[x as usize + i + (self.current_scanline as usize * WIDTH)] = 0;
+                    }
+                    1 => {
+                        self.vram[x as usize + i + (self.current_scanline as usize * WIDTH)] = self.palette[sp0 as usize];
+                    }
+                    2 => {
+                        self.vram[x as usize + i + (self.current_scanline as usize * WIDTH)] = self.palette[sp1 as usize];
+                    }
+                    3 => {
+                        self.vram[x as usize + i + (self.current_scanline as usize * WIDTH)] = self.palette[sp2 as usize];
+                    }
+
+                    _ => {}
+                }
+            }
+        }
     }
 
     pub fn update_window(&self, window: &mut Window) {
         let _ = window.update_with_buffer(&self.vram);
     }
 
-    pub fn is_vblank(&mut self, vblank: bool) {
-        if vblank {
-            self.status |= 0x80;
-            self.oam_addr = 0;
-        } else {
-            self.status &= 0x30;
+    pub fn evaluate_sprites(&mut self) {
+        for i in 0..8 {
+            self.scanline_sprite_y[i] = 0xFF;
+            self.scanline_sprite_tile[i] = 0xFF;
+            self.scanline_sprite_attrib[i] = 0xFF;
+            self.scanline_sprite_x[i] = 0xFF;
+        }
+
+        let mut found_sprites = 0;
+        for i in 0..64 {
+            let y = self.oam[i*4] as u8;
+            let tile = self.oam[i*4 + 1] as u8;
+            let attrib = self.oam[i*4 + 2];
+            let x = self.oam[i*4 + 3] as u8;
+
+            if self.current_scanline >= y as u32 && self.current_scanline <= y as u32 + 8 {
+                self.scanline_sprite_y[found_sprites] = y as u8;
+                self.scanline_sprite_tile[found_sprites] = tile;
+                self.scanline_sprite_attrib[found_sprites] = attrib;
+                self.scanline_sprite_x[found_sprites] = x;
+
+                found_sprites += 1;
+            }
+
+            if found_sprites >= 8 {
+                break;
+            }
         }
     }
 
@@ -282,6 +240,12 @@ impl NESPpu {
             0x1000
         };
 
+        let sprite_pt_offset: u16 = if self.ctrl&0x8 == 0 {
+            0
+        } else {
+            0x1000
+        };
+
         for _ in 0..cycles*3 {
 
             if self.current_scanline < 240 {
@@ -289,8 +253,6 @@ impl NESPpu {
                     0 => {
                         self.cycles += 1;
                         self.status &= 0x30;
-
-                        self.status |= 0x40;
                     }
 
                     1...256 => {
@@ -350,7 +312,7 @@ impl NESPpu {
                                     }
                                 };
 
-                                self.blit_bg(bg0, bg1, bg2, window);
+                                self.blit_bg(bg0, bg1, bg2);
 
                                 self.in_progress_cycles = 0;
                                 self.cycles += 8;
@@ -362,8 +324,87 @@ impl NESPpu {
                     }
 
                     257...320 => {
-                        self.cycles += 1;
-                        //println!("Wasting, Cycle: {}", self.cycles);
+                        if self.cycles == 257 {
+                            self.evaluate_sprites();
+                        }
+
+                        self.in_progress_cycles += 1;
+                        match (self.in_progress_cycles-1)%8 {
+                            //Nametable byte
+                            0...1 => {
+                                self.nt_latch = mmu.read_ppu_data(nt_offset + ((self.cycles - 1)/8) as u16 + ((self.current_scanline/8) as u16)*32);
+                                //println!("latch 0x{:02X}", self.nt_latch);
+                            }
+                            //Attribute table byte
+                            2...3 => {
+                                self.nt_latch = mmu.read_ppu_data(nt_offset + ((self.cycles - 1)/8) as u16 + ((self.current_scanline/8) as u16)*32);
+                            }
+                            //Tile bitmap low
+                            4...5 => {
+                                let tile = self.scanline_sprite_tile[(self.cycles as usize - 257)/8] as u16;
+                                let mut y = self.scanline_sprite_y[(self.cycles as usize - 257)/8] as i32 + 1;
+
+                                
+                                let attrib = self.scanline_sprite_attrib[(self.cycles as usize - 257)/8];
+
+                                y = if self.current_scanline as i32 >= y {
+                                    self.current_scanline as i32 - y
+                                } else {
+                                    y - self.current_scanline as i32
+                                };
+                                if attrib&0x80 > 0 {
+                                    //y = 7 - (y%8);
+                                } else {
+                                    y %= 8;
+                                }
+
+                                self.tile_low_latch = mmu.read_ppu_data(sprite_pt_offset + tile*16 + y as u16 % 8);
+                            }
+                            //Tile bitmap high (+8 bytes from tile bitmap low)
+                            6...7 => {
+                                let tile = self.scanline_sprite_tile[(self.cycles as usize - 257)/8] as u16;
+                                let x = self.scanline_sprite_x[(self.cycles as usize - 257)/8];
+                                let mut y = self.scanline_sprite_y[(self.cycles as usize - 257)/8] as i32 + 1;
+                                let attrib = self.scanline_sprite_attrib[(self.cycles as usize - 257)/8];
+
+                                y = if self.current_scanline as i32 >= y {
+                                    self.current_scanline as i32 - y
+                                } else {
+                                    y - self.current_scanline as i32
+                                };
+                                if attrib&0x80 > 0 {
+                                    //y = 7 - (y%8);
+                                } else {
+                                    y %= 8;
+                                }
+
+                                self.tile_high_latch = mmu.read_ppu_data(sprite_pt_offset + tile*16 + y as u16 + 8);
+
+                                let (sp0,sp1,sp2) = match attrib&0x3 {
+                                    0 => {
+                                        (mmu.read_ppu_data(0x3F11), mmu.read_ppu_data(0x3F12), mmu.read_ppu_data(0x3F13))
+                                    }
+                                    1 => {
+                                        (mmu.read_ppu_data(0x3F15), mmu.read_ppu_data(0x3F16), mmu.read_ppu_data(0x3F17))
+                                    }
+                                    2 => {
+                                        (mmu.read_ppu_data(0x3F19), mmu.read_ppu_data(0x3F1A), mmu.read_ppu_data(0x3F1B))
+                                    }
+                                    3 => {
+                                        (mmu.read_ppu_data(0x3F1D), mmu.read_ppu_data(0x3F1E), mmu.read_ppu_data(0x3F1F))
+                                    }
+                                    _ => {
+                                        (mmu.read_ppu_data(0x3F11), mmu.read_ppu_data(0x3F12), mmu.read_ppu_data(0x3F13))
+                                    }
+                                };
+
+                                self.blit_sprite(sp0, sp1, sp2, x, (attrib&0x40)>0);
+
+                                self.in_progress_cycles = 0;
+                                self.cycles += 8;
+                            }
+                            _ => {}
+                        }
                     }
 
                     321...336 => {

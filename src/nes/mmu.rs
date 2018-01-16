@@ -98,11 +98,11 @@ impl NESMmu {
     }
 
     pub fn read_absolute_indexed_x(&mut self, addr: u16, x: u8) -> u8 {
-        self.read_mem((addr + x as u16))
+        self.read_mem(addr.wrapping_add(x as u16))
     }
 
     pub fn read_absolute_indexed_y(&mut self, addr: u16, y: u8) -> u8 {
-        self.read_mem((addr + y as u16))
+        self.read_mem(addr.wrapping_add(y as u16))
     }
 
     pub fn read_indexed_indirect_x(&mut self, addr: u8, x: u8) -> u8 {
@@ -185,7 +185,7 @@ impl NESMmu {
 
             0x8000...0xBFFF => {
                 if ((addr-0x8000)+0x10) as usize >= self.cart_rom.len() {
-                    println!("error reading from cart: reached end of rom! addr: 0x{:04X} 0x{:04X}", ((addr-0x8000)+0x10), addr);
+                    println!("error reading from cart: reached end of rom!");
                     return 0;
                 }
 
@@ -193,11 +193,17 @@ impl NESMmu {
             }
 
             0xC000...0xFFFF => {
-                if ((addr - 0xC000) + 0x4000 + 0x10) as usize >= self.cart_rom.len() {
-                    println!("error reading from cart: reached end of rom! addr: 0x{:04X}", ((addr-0x8000)+0x10));
+                let offset = if self.cart_rom[4] > 1 {
+                    0x4000
+                } else {
+                    0
+                };
+
+                if ((addr - 0xC000) + offset + 0x10) as usize >= self.cart_rom.len() {
+                    println!("error reading from cart: reached end of rom!");
                     return 0;
                 }
-                self.cart_rom[((addr - 0xC000) + 0x4000 + 0x10) as usize]
+                self.cart_rom[((addr - 0xC000) + offset + 0x10) as usize]
             }
 
 
