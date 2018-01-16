@@ -22,9 +22,9 @@ use std::io::Read;
 use std::vec::Vec;
 use minifb::{WindowOptions, Window, Key, Scale};
 
-pub struct NES<'a> {
+pub struct NES {
     cpu: NESCpu,
-    mmu: NESMmu<'a>,
+    mmu: NESMmu,
     ppu: NESPpu,
     apu: NESApu,
     io: NESIo,
@@ -36,10 +36,10 @@ pub struct NES<'a> {
     elapsed_cycles: u32,
 }
 
-impl<'a> NES<'a> {
-    pub fn new() -> NES<'a> {
+impl NES {
+    pub fn new() -> NES {
         let ppu = NESPpu::new();
-        NES {
+        let mut nes = NES {
             cpu: NESCpu::new(),
             ppu: ppu,
             mmu: NESMmu::new(),
@@ -56,7 +56,9 @@ impl<'a> NES<'a> {
 
             current_cycle: 0,
             elapsed_cycles: 0,
-        }
+        };
+        
+        return nes;
     }
 
     //Power up info obtained from NESDev wiki
@@ -109,6 +111,38 @@ impl<'a> NES<'a> {
         match rom_file.read_to_end(&mut data) {
             Ok(size) => {
                 println!("read rom {:04X} bytes", size);
+
+                println!("ROM Size:");
+                println!("Size of PRG ROM * 16KB: 0x{:0X}", data[4] as u16);
+                println!("Size of CHR ROM * 8KB:  0x{:0X}", data[5] as u16);
+
+                println!("\nFlags:");
+                print!("Mirroring: ");
+                if (data[6] & 0x1) > 0 {
+                    println!("Vertical (Horizontal Arrangment)");
+                } else {
+                    println!("Horizontal (Vertical Arrangment)");
+                }
+
+                if (data[6] & 0x2) > 0 {
+                    println!("Has persistent memory ($6000 - $7FFF)");
+                } else {
+                    println!("No persistent memory");
+                }
+
+                if (data[6] & 0x4) > 0 {
+                    println!("Has trainer ($7000 - $71FF)");
+                } else {
+                    println!("No trainer");
+                }
+
+                if (data[6] & 0x8) > 0 {
+                    println!("Ignore mirror bit (bit 0), provide four-screen vram");
+                }
+
+                println!("\nMapper: {:03}", ((data[6] & 0b1111) >> 4) & (data[6] & 0b1111));
+
+
                 self.mmu.fill_rom(data);
                 return true;
             }
@@ -121,6 +155,9 @@ impl<'a> NES<'a> {
 
     pub fn run(&mut self) {
 
+        self.mmu.ppu = Some(&mut self.ppu);
+        self.mmu.io = Some(&mut self.io);
+
         let mut scanner = ControllerScanner::new();
         let mut adapter = scanner.find_adapter(0x11c0, 0x5500).unwrap().unwrap();
         let mut listener = adapter.listen().unwrap();
@@ -132,11 +169,11 @@ impl<'a> NES<'a> {
                 break;
             }
 
-            if self.ppu.do_cycle(delta_cycles) {
+            if self.ppu.do_cycle(delta_cycles, &mut self.mmu, &mut self.window) && self.ppu.ctrl&0x80 > 0 {
                 self.cpu.do_nmi(&mut self.mmu);
             }
-            
-            if self.last_frame_instant.elapsed() >= Duration::from_millis(1) {
+
+            if self.last_frame_instant.elapsed() >= Duration::from_millis(8) {
                 match listener.read() {
                     Ok(Some(controller)) => {
                         self.io.set_controller_button(NESIoButton::A, controller.a);
@@ -152,7 +189,7 @@ impl<'a> NES<'a> {
                 }
 
                 self.last_frame_instant = Instant::now();
-                self.window.update();
+                self.ppu.update_window(&mut self.window);
             }
         }
     }

@@ -1,5 +1,7 @@
 use minifb::{Window, Key, Scale};
 
+use super::mmu::NESMmu;
+
 pub const WIDTH: usize = 256;// + 256;// 341;
 pub const HEIGHT: usize = 240;// + 240;
 
@@ -16,32 +18,21 @@ pub struct NESPpu {
 
     pub latch: u8,
 
-    scroll_write: bool,
-    addr_write: bool,
+    pub scroll_write: bool,
+    pub addr_write: bool,
     vertical_mirror: bool,
-
-    nametable1: [u8; 0x400],
-    nametable2: [u8; 0x400],
-    nametable3: [u8; 0x400],
-    nametable4: [u8; 0x400],
-    patterntable1: [u8; 0x1000],
-    patterntable2: [u8; 0x1000],
-
-    bg_palette0: [u8;3],
-    bg_palette1: [u8;3],
-    bg_palette2: [u8;3],
-    bg_palette3: [u8;3],
-
-    sprite_palette0: [u8;3],
-    sprite_palette1: [u8;3],
-    sprite_palette2: [u8;3],
-    sprite_palette3: [u8;3],
 
     palette: [u32;0x40],
 
     vram: Vec<u32>,
 
     cycles: u32,
+    in_progress_cycles: u32,
+    current_scanline: u32,
+    nt_latch: u8,
+    attrib_latch: u8,
+    tile_low_latch: u8,
+    tile_high_latch: u8,
 }
 
 impl NESPpu {
@@ -67,23 +58,6 @@ impl NESPpu {
             addr_write: false,
             vertical_mirror: false,
 
-            nametable1: [0; 0x400],
-            nametable2: [0; 0x400],
-            nametable3: [0; 0x400],
-            nametable4: [0; 0x400],
-            patterntable1: [0; 0x1000],
-            patterntable2: [0; 0x1000],
-
-            bg_palette0: [0u8;3],
-            bg_palette1: [0u8;3],
-            bg_palette2: [0u8;3],
-            bg_palette3: [0u8;3],
-
-            sprite_palette0: [0u8;3],
-            sprite_palette1: [0u8;3],
-            sprite_palette2: [0u8;3],
-            sprite_palette3: [0u8;3],
-
             palette: [0x6D6D6D,0x002491,0x0000DA,0x6D48DA,0x91006D,0xB6006D,0xB62400,0x914800,0x6D4800,0x244800,0x006D24,0x009100,0x004848,0x000000,0x000000,0x000000,
                       0xB6B6B6,0x006DDA,0x0048FF,0x9100FF,0xB600FF,0xFF0091,0xFF0000,0xDA6D00,0x916D00,0x249100,0x009100,0x00B66D,0x009191,0x000000,0x000000,0x000000,
                       0xFFFFFF,0x6DB6FF,0x9191FF,0xDA6DFF,0xFF00FF,0xFF6DFF,0xFF9100,0xFFB600,0xDADA00,0x6DDA00,0x00FF00,0x48FFDA,0x00FFFF,0x000000,0x000000,0x000000,
@@ -92,227 +66,17 @@ impl NESPpu {
             vram: vec![0u32; WIDTH*HEIGHT],
 
             cycles: 0,
+            in_progress_cycles: 0,
+            current_scanline: 0,
+            nt_latch: 0,
+            attrib_latch: 0,
+            tile_low_latch: 0,
+            tile_high_latch: 0,
         }
     }
 
     pub fn set_mirroring(&mut self, vertical_mirror: bool) {
         self.vertical_mirror = vertical_mirror;
-    }
-
-    pub fn ctrl(&self) -> u8 {
-        self.ctrl
-    }
-
-    pub fn cycles(&self) -> u32 {
-        self.cycles
-    }
-
-    //Info on what address maps to what
-    //https://wiki.nesdev.com/w/index.php/PPU_registers
-    pub fn read_ppu(&mut self, addr: usize) -> u8 {
-        match addr {
-            //Write-Only
-            0 => {
-                //I'm currently unclear as to which value
-                //should be returned here, since both $2005 and $2006
-                //are labeled as the latch. So for now we'll just
-                //return $2005 (ppu scroll)
-
-                self.scroll_x
-            }
-            
-            //Write-Only
-            1 => {
-                self.scroll_x
-            }
-            
-            //Read-Only
-            2 => {
-                //This one is interesting, since only the top 3 bits
-                //actually contain the status register
-                
-                if self.cycles < 20 {
-                    self.status&0xE0 | self.latch&0x1F;
-                    self.status &= 0x70;
-
-                    return self.status;
-                }
-                
-                self.status&0xE0 | self.latch&0x1F
-            }
-            
-            //Write-Only
-            3 => {
-                self.scroll_x
-            }
-            
-            //Read-Write
-            4 => {
-                self.oam[self.oam_addr as usize]
-            }
-            
-            //Write-Only
-            5 => {
-                self.scroll_x
-            }
-            
-            //Write-Only
-            6 => {
-                self.scroll_x
-            }
-            
-            //Read-Write
-            7 => {
-                //self.data
-                0
-            }
-
-            //If the interconnect is programmed properly
-            //this should never be reached
-            _ => {
-                println!("invalid addr given to ppu structure, is interconnect wrong?");
-
-                //Why not
-                self.scroll_x
-            }
-        }
-    }
-
-    //Info on what address maps to what
-    //https://wiki.nesdev.com/w/index.php/PPU_registers
-    pub fn write_ppu(&mut self, addr: usize, val: u8){
-        self.latch = val;
-
-        match addr {
-            //Write-Only
-            0 => {
-                self.ctrl = val;
-            }
-            
-            //Write-Only
-            1 => {
-                self.mask = val;
-            }
-            
-            //Read-Only
-            2 => {
-                
-            }
-            
-            //Write-Only
-            3 => {
-                self.oam_addr = val;
-            }
-            
-            //Read-Write
-            4 => {
-                self.oam[self.oam_addr as usize] = val;
-                self.oam_addr = self.oam_addr.wrapping_add(1);
-            }
-            
-            //Write-Only
-            5 => {
-                if !self.scroll_write {
-                    self.scroll_x = val;
-                } else {
-                    self.scroll_y = val%240;
-                }
-
-                self.scroll_write = !self.scroll_write;
-            }
-            
-            //Write-Only
-            6 => {
-                if !self.addr_write {
-                    self.addr = (val as u16) << 8;
-
-                    self.addr %= 0x4000;
-                } else {
-                    self.addr = (self.addr&0xFF00) | val as u16;
-                    //panic!("addr: 0x{:04X}", self.addr);
-                }
-
-                self.addr_write = !self.addr_write;
-            }
-            
-            //Read-Write
-            7 => {
-                match self.addr {
-                    0x0000...0x0FFF => {
-                        self.patterntable1[self.addr as usize] = val;
-                    }
-                    0x1000...0x1FFF => {
-                        self.patterntable2[(self.addr - 0x1000) as usize] = val;
-                    }
-
-                    0x2000...0x23FF => {
-                        self.nametable1[(self.addr - 0x2000) as usize] = val;
-                    }
-
-                    0x2400...0x27FF => {
-                        self.nametable2[(self.addr - 0x2400) as usize] = val;
-                    }
-
-                    0x2800...0x2BFF => {
-                        self.nametable3[(self.addr - 0x2800) as usize] = val;
-                    }
-
-                    0x2C00...0x2FFF => {
-                        self.nametable4[(self.addr - 0x2C00) as usize] = val;
-                    }
-
-                    0x3F00 => {
-
-                    }
-
-                    0x3F01...0x3F03 => {
-                        self.bg_palette0[(self.addr - 0x3F01) as usize] = val;
-                    }
-                    0x3F05...0x3F07 => {
-                        self.bg_palette1[(self.addr - 0x3F05) as usize] = val;
-                    }
-                    0x3F09...0x3F0B => {
-                        self.bg_palette2[(self.addr - 0x3F09) as usize] = val;
-                    }
-                    0x3F0D...0x3F0F => {
-                        self.bg_palette3[(self.addr - 0x3F0D) as usize] = val;
-                    }
-
-                    0x3F11...0x3F13 => {
-                        self.sprite_palette0[(self.addr - 0x3F11) as usize] = val;
-                    }
-                    0x3F15...0x3F17 => {
-                        self.sprite_palette1[(self.addr - 0x3F15) as usize] = val;
-                    }
-                    0x3F19...0x3F1B => {
-                        self.sprite_palette2[(self.addr - 0x3F19) as usize] = val;
-                    }
-                    0x3F1D...0x3F1F => {
-                        self.sprite_palette3[(self.addr - 0x3F1D) as usize] = val;
-                    }
-
-                    _ => {
-
-                    }
-                }
-
-                if self.ctrl&0x4 > 0 {
-                    if self.addr/32 >= 511 {
-                        self.addr = self.addr - (32*511)+1;
-                    } else {
-                        self.addr = self.addr.wrapping_add(32);
-                    }
-                } else {
-                    self.addr = self.addr.wrapping_add(1);
-                }
-            }
-
-            //If the interconnect is programmed properly
-            //this should never be reached
-            _ => {
-                println!("invalid addr given to ppu structure, is interconnect wrong?");
-            }
-        }
     }
 
     pub fn dma(&mut self, data: &[u8]) {
@@ -322,132 +86,30 @@ impl NESPpu {
         }
     }
 
-    pub fn blit(&mut self, pt0: &[u8], pt1: &[u8], nt0: &[u8], nt1: &[u8], ram: &[u8;0x10000], delta_ram: &mut [bool;0x10000], window: &mut Window) {
+    pub fn blit_bg(&mut self, bg0: u8, bg1: u8, bg2: u8, window: &mut Window) {
         if self.mask&0x8 >= 0 {
-            let pt = if self.ctrl&0x10 == 0 {
-                pt1
-                //&self.patterntable1
-            } else {
-                pt1
-                //&self.patterntable2
-            };
+            for i in 0..8 {
+                let color = (self.tile_low_latch >> (7-i)) & 0x1 | ((self.tile_high_latch >> (7-i)) & 0x1) << 1;
 
-            for y in 0..HEIGHT {
-                let mut x = 0;
-                let nt_y = ((y + self.scroll_y as usize))%(HEIGHT);
-
-                loop {
-                    if x >= WIDTH {
-                        break;
+                match color {
+                    0 => {
+                        self.vram[(self.cycles-1) as usize + i + (self.current_scanline as usize * WIDTH)] = 0;
+                    }
+                    1 => {
+                        self.vram[(self.cycles-1) as usize + i + (self.current_scanline as usize * WIDTH)] = self.palette[bg0 as usize];
+                    }
+                    2 => {
+                        self.vram[(self.cycles-1) as usize + i + (self.current_scanline as usize * WIDTH)] = self.palette[bg1 as usize];
+                    }
+                    3 => {
+                        self.vram[(self.cycles-1) as usize + i + (self.current_scanline as usize * WIDTH)] = self.palette[bg2 as usize];
                     }
 
-                    let mut nt_x = ((x + self.scroll_x as usize))%(WIDTH);
-
-                    let nt = match self.ctrl&0x3 {
-                        0 => {
-                            &self.nametable1
-                        }
-
-                        1 => {
-                            if self.vertical_mirror {
-                                &self.nametable2
-                            } else {
-                                &self.nametable1
-                            }
-                        }
-
-                        2 => {
-                            if self.vertical_mirror {
-                                &self.nametable1
-                            } else {
-                                &self.nametable3
-                            }
-                        }
-
-                        3 => {
-                            if self.vertical_mirror {
-                                &self.nametable2
-                            } else {
-                                &self.nametable4
-                            }
-                        }
-                        
-                        _ => {
-                            &self.nametable1
-                        }
-                    };
-
-                    let attrib = nt[(nt_x/32) + (nt_y/32)*8 + 0x3C0];
-
-                    let palette = match (nt_x/16,nt_y/16) {
-                        (0,0) => {
-                            attrib&0x3
-                        }
-                        (1,0) => {
-                            (attrib&0xC) >> 2
-                        }
-                        (0,1) => {
-                            (attrib&0x30) >> 4
-                        }
-                        (1,1) => {
-                            (attrib&0xC0) >> 6
-                        }
-
-                        _ => {
-                            attrib&0x3
-                        }
-                    };
-
-                    let bg_pal = match palette {
-                        0 => {
-                            self.bg_palette0
-                        }
-                        1 => {
-                            self.bg_palette1
-                        }
-                        2 => {
-                            self.bg_palette2
-                        }
-                        3 => {
-                            self.bg_palette3
-                        }
-                        _ => {
-                            self.bg_palette0
-                        }
-                    };
-
-                    let pattern_addr = nt[nt_x/8 + ((nt_y/8)*32)] as usize;
-                    
-                    let sliver1 = pt[pattern_addr*16 + (nt_y%8)];// scroll_x;
-                    let sliver2 = pt[pattern_addr*16 + (nt_y%8) + 8];// >> scroll_x;
-
-                    for i in 0..8 {
-                        let color = (sliver1 >> (7-i)) & 0x1 | ((sliver2 >> (7-i)) & 0x1) << 1;
-
-                        match color {
-                            0 => {
-                                self.vram[x+i + (y*WIDTH)] = 1;
-                            }
-                            1 => {
-                                self.vram[x+i + (y*WIDTH)] = self.palette[bg_pal[0] as usize];
-                            }
-                            2 => {
-                                self.vram[x+i + (y*WIDTH)] = self.palette[bg_pal[1] as usize];
-                            }
-                            3 => {
-                                self.vram[x+i + (y*WIDTH)] = self.palette[bg_pal[2] as usize];
-                            }
-                            _ => {
-                                self.vram[x+i + (y*WIDTH)] = 1;
-                            }
-                        }
-                    }
-
-                    x += 8;
+                    _ => {}
                 }
             }
 
-            let pt = if self.ctrl&0x8 == 0 {
+            /*let pt = if self.ctrl&0x8 == 0 {
                 pt0
                 //&self.patterntable1
             } else {
@@ -538,7 +200,7 @@ impl NESPpu {
                     }
 
                 }
-            }
+            }*/
             
         }
         //let _ = window.update_with_buffer(&self.vram);
@@ -576,30 +238,177 @@ impl NESPpu {
         }
     }
 
-    pub fn do_cycle(&mut self, cycles: u32) -> bool {
-        self.cycles += cycles;
+    //https://wiki.nesdev.com/w/index.php/PPU_rendering
+    pub fn do_cycle(&mut self, cycles: u32, mmu: &mut NESMmu, window: &mut Window) -> bool {
+        //self.cycles += cycles;
 
         //TODO: do cycle exact ppu rendering
-
-        /*
-        match self.cycles {
+        let nt_offset = match self.ctrl&0x3 {
             0 => {
-                self.status &= 0x70;
+                0x2000
             }
 
-            241 => {
-                self.status |= 0x80;
-                self.oam_addr = 0;
+            1 => {
+                if self.vertical_mirror {
+                    0x2400
+                } else {
+                    0
+                }
             }
 
-            340 => {
-                self.cycles = 0;
+            2 => {
+                if self.vertical_mirror {
+                    0x2000
+                } else {
+                    0x2800
+                }
+            }
+
+            3 => {
+                if self.vertical_mirror {
+                    0x2400
+                } else {
+                    0x2C00
+                }
             }
 
             _ => {
-
+                0x2000
             }
-        }*/
+        };
+        let pt_offset: u16 = if self.ctrl&0x10 == 0 {
+            0
+        } else {
+            0x1000
+        };
+
+        for _ in 0..cycles*3 {
+
+            if self.current_scanline < 240 {
+                match self.cycles {
+                    0 => {
+                        self.cycles += 1;
+                        self.status &= 0x30;
+
+                        self.status |= 0x40;
+                    }
+
+                    1...256 => {
+                        self.in_progress_cycles += 1;
+                        match (self.in_progress_cycles-1)%8 {
+                            //Nametable byte
+                            0...1 => {
+                                self.nt_latch = mmu.read_ppu_data(nt_offset + ((self.cycles - 1)/8) as u16 + ((self.current_scanline/8) as u16)*32);
+                                //println!("latch 0x{:02X}", self.nt_latch);
+                            }
+                            //Attribute table byte
+                            2...3 => {
+                                self.attrib_latch = mmu.read_ppu_data(nt_offset + ((self.cycles - 1)/32) as u16 + ((self.current_scanline/32) as u16)*8 + 0x3C0);
+                            }
+                            //Tile bitmap low
+                            4...5 => {
+                                self.tile_low_latch = mmu.read_ppu_data(pt_offset + (self.nt_latch as u16 * 16) + ((self.current_scanline%8) as u16));
+                            }
+                            //Tile bitmap high (+8 bytes from tile bitmap low)
+                            6...7 => {
+                                self.tile_high_latch = mmu.read_ppu_data(pt_offset + (self.nt_latch as u32 * 16) as u16 + ((self.current_scanline%8) as u16 + 8));
+
+                                let palette = match ((self.cycles - 1)/16,self.current_scanline/16) {
+                                    (0,0) => {
+                                        self.attrib_latch&0x3
+                                    }
+                                    (1,0) => {
+                                        (self.attrib_latch >> 2)&3
+                                    }
+                                    (0,1) => {
+                                        (self.attrib_latch >> 4)&3
+                                    }
+                                    (1,1) => {
+                                        (self.attrib_latch >> 6)&3
+                                    }
+
+                                    _ => {
+                                        self.attrib_latch&0x3
+                                    }
+                                };
+
+                                let (bg0,bg1,bg2) = match palette {
+                                    0 => {
+                                        (mmu.read_ppu_data(0x3F01), mmu.read_ppu_data(0x3F02), mmu.read_ppu_data(0x3F03))
+                                    }
+                                    1 => {
+                                        (mmu.read_ppu_data(0x3F05), mmu.read_ppu_data(0x3F06), mmu.read_ppu_data(0x3F07))
+                                    }
+                                    2 => {
+                                        (mmu.read_ppu_data(0x3F09), mmu.read_ppu_data(0x3F0A), mmu.read_ppu_data(0x3F0B))
+                                    }
+                                    3 => {
+                                        (mmu.read_ppu_data(0x3F0D), mmu.read_ppu_data(0x3F0E), mmu.read_ppu_data(0x3F0F))
+                                    }
+                                    _ => {
+                                        (mmu.read_ppu_data(0x3F01), mmu.read_ppu_data(0x3F02), mmu.read_ppu_data(0x3F03))
+                                    }
+                                };
+
+                                self.blit_bg(bg0, bg1, bg2, window);
+
+                                self.in_progress_cycles = 0;
+                                self.cycles += 8;
+
+                                //println!("Done 4 byte fetch, Cycle: {}", self.cycles);
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    257...320 => {
+                        self.cycles += 1;
+                        //println!("Wasting, Cycle: {}", self.cycles);
+                    }
+
+                    321...336 => {
+                        self.cycles += 1;
+                        //println!("Wasting, Cycle: {}", self.cycles);
+                    }
+
+                    337...339 => {
+                        self.cycles += 1;
+                        //println!("Wasting, Cycle: {}", self.cycles);
+                    }
+
+                    340 => {
+                        self.cycles = 0;
+                        self.current_scanline += 1;
+                        //println!("Finished Scanline {}, Cycle: {}", self.current_scanline, self.cycles);
+                    }
+
+                    _ => {
+                        self.cycles += 1;
+                    }
+                }
+            } else {
+                self.cycles += 1;
+
+                if self.cycles == 340 {
+                    self.cycles = 0;
+                    self.current_scanline += 1;
+                }
+
+                //Trigger NMI
+                if self.current_scanline == 241 && self.cycles == 0 {
+                    //println!("NMI {}", self.cycles);
+                    self.status |= 0x80;
+                    self.oam_addr = 0;
+                    return true;
+                }
+
+                if self.current_scanline == 260 {
+                    self.current_scanline = 0;
+                }
+            }
+        }
+
+        
 
         return false;        
     }

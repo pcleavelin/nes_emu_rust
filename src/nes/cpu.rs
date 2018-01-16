@@ -685,13 +685,13 @@ impl NESCpu {
         let opcode = Opcode::new(op | imm1 | imm2);
         let mut delta_cycles = 0;
 
-        println!("pc: 0x{:04X}", self.pc);
+        //println!("pc: 0x{:04X}", self.pc);
 
         //using a nifty crate that can convert integers to enums
         //to make pattern matching nicer
         match Op::from_i32(opcode.op() as i32) {
             Some(op) => {
-                print!("{:?} ", op);
+                //print!("{:?} ", op);
                 delta_cycles = self.get_op_cycles(&op);
 
                 match op {
@@ -797,9 +797,9 @@ impl NESCpu {
                     //Branch if Plus (adds to the program counter if negative flag is clear)
                     Op::BPLRelative => {
                         if self.p.negative == false {
-                            //print!("Branching from 0x{:04X}", self.pc);
+                            ////print!("Branching from 0x{:04X}", self.pc);
                             self.offset_pc(opcode.imm1().cast_with_neg());
-                            //println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
+                            ////println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
                         }
 
                         self.offset_pc(2);
@@ -876,7 +876,7 @@ impl NESCpu {
 
                     //Pushes return point onto stack (pc + 3), then sets pc to absolute address
                     Op::JSRAbsolute => {
-                        print!("Jumping from 0x{:04X} --- ", self.pc);
+                        //print!("Jumping from 0x{:04X} --- ", self.pc);
 
                         let return_point = self.pc.wrapping_add(2);
                         let addr = opcode.abs_addr() as u16;
@@ -885,7 +885,7 @@ impl NESCpu {
                         self.push_stack(mmu, (return_point&0xFF) as u8);
                         self.pc = addr;
 
-                        println!("Jumping to 0x{:04X}", self.pc);
+                        //println!("Jumping to 0x{:04X}", self.pc);
                     }
 
                     Op::ANDIndirectX => {
@@ -988,9 +988,9 @@ impl NESCpu {
 
                     Op::BMIRelative => {
                         if self.p.negative == true {
-                            //print!("Branching from 0x{:04X}", self.pc);
+                            ////print!("Branching from 0x{:04X}", self.pc);
                             self.offset_pc(opcode.imm1().cast_with_neg());
-                            //println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
+                            ////println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
                         }
 
                         self.offset_pc(2);
@@ -1151,9 +1151,9 @@ impl NESCpu {
 
                     Op::BVCRelative => {
                         if self.p.overflow == false {
-                            //print!("Branching from 0x{:04X}", self.pc);
+                            ////print!("Branching from 0x{:04X}", self.pc);
                             self.offset_pc(opcode.imm1().cast_with_neg());
-                            //println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
+                            ////println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
                         }
 
                         self.offset_pc(2);
@@ -1228,7 +1228,7 @@ impl NESCpu {
                     }
 
                     Op::RTSImplied => {
-                        print!("Returning from 0x{:04X} sp: 0x{:04X} -- ", self.pc, self.s);
+                        //print!("Returning from 0x{:04X} sp: 0x{:04X} -- ", self.pc, self.s);
 
                         let lo = self.pop_stack(mmu) as u16;
                         let hi = self.pop_stack(mmu) as u16;
@@ -1238,8 +1238,8 @@ impl NESCpu {
 
                         self.offset_pc(1);
 
-                        ////println!("S: {:04X}", self.s);
-                        println!("Returning to 0x{:04X} - sp: 0x{:04X}", self.pc, self.s);
+                        //////println!("S: {:04X}", self.s);
+                        //println!("Returning to 0x{:04X} - sp: 0x{:04X}", self.pc, self.s);
                     }
 
                     Op::ADCIndirectX => {
@@ -1311,9 +1311,9 @@ impl NESCpu {
 
                     Op::BVSRelative => {
                         if self.p.overflow == true {
-                            //print!("Branching from 0x{:04X}", self.pc);
+                            ////print!("Branching from 0x{:04X}", self.pc);
                             self.offset_pc(opcode.imm1().cast_with_neg());
-                            //println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
+                            ////println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
                         }
 
                         self.offset_pc(2);
@@ -1459,9 +1459,9 @@ impl NESCpu {
 
                     Op::BCCRelative => {
                         if self.p.carry == false {
-                            //print!("Branching from 0x{:04X}", self.pc);
+                            ////print!("Branching from 0x{:04X}", self.pc);
                             self.offset_pc(opcode.imm1().cast_with_neg());
-                            //println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
+                            ////println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
                         }
 
                         self.offset_pc(2);
@@ -1509,7 +1509,7 @@ impl NESCpu {
                     Op::TXSImplied => {
                         self.s = self.x;
 
-                        ////println!("TXS sp: 0x{:04X}", self.s);
+                        //////println!("TXS sp: 0x{:04X}", self.s);
 
                         self.offset_pc(1);
                     }
@@ -1618,9 +1618,9 @@ impl NESCpu {
                     //Branch if carry set (adds to the program counter if carry flag is set)
                     Op::BCSRelative => {
                         if self.p.carry == true {
-                            //print!("Branching from 0x{:04X}", self.pc);
+                            ////print!("Branching from 0x{:04X}", self.pc);
                             self.offset_pc(opcode.imm1().cast_with_neg());
-                            //println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
+                            ////println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
                         }
 
                         self.offset_pc(2);
@@ -1793,9 +1793,9 @@ impl NESCpu {
                     //Branch if not equal (adds to the program counter if zero flag is not set)
                     Op::BNERelative => {
                         if self.p.zero == false {
-                            //print!("Branching from 0x{:04X}", self.pc);
+                            ////print!("Branching from 0x{:04X}", self.pc);
                             self.offset_pc(opcode.imm1().cast_with_neg());
-                            //println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
+                            ////println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
                         }
 
                         self.offset_pc(2);
@@ -1952,9 +1952,9 @@ impl NESCpu {
 
                     Op::BEQRelative => {
                         if self.p.zero == true {
-                            //print!("Branching from 0x{:04X}", self.pc);
+                            ////print!("Branching from 0x{:04X}", self.pc);
                             self.offset_pc(opcode.imm1().cast_with_neg());
-                            //println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
+                            ////println!(" to 0x{:04X} (PC + 0x{:02X})", self.pc + 2, opcode.imm1().cast_with_neg());
                         }
 
                         self.offset_pc(2);
@@ -2030,22 +2030,22 @@ impl NESCpu {
                     }
 
                     _ => {
-                        println!("{:?}", opcode);
-                        println!("unimplemented opcode");
+                        //println!("{:?}", opcode);
+                        //println!("unimplemented opcode");
                         return (false,0)
                     }
                 }
             }
             
             None => {
-                println!("unknown {:?}", opcode);
+                //println!("unknown {:?}", opcode);
                 return (false,0)
             }
         }
         
-        println!("{:?}", opcode);
+        //println!("{:?}", opcode);
 
-        println!("a: 0x{:02X}\nx: 0x{:02X}\ny: 0x{:02X}\ns: 0x{:02X}\n{:?}\n\n", self.a, self.x, self.y, self.s, self.p);
+        //println!("a: 0x{:02X}\nx: 0x{:02X}\ny: 0x{:02X}\ns: 0x{:02X}\n{:?}\n\n", self.a, self.x, self.y, self.s, self.p);
 
         return (true,delta_cycles);
     }
