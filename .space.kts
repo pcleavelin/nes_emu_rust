@@ -8,7 +8,7 @@ job("Hello World!") {
     container(displayName = "Say Hello", image = "ubuntu") {
     	shellScript {
             content = """
-            	sudo apt install cargo -y
+            	apt install cargo -y
 			    cargo build
             """
         }
